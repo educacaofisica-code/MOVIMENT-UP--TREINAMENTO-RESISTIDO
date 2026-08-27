@@ -1,0 +1,24 @@
+MOVIMENT' UP — VERSÃO PWA PREPARADA
+
+O que esta versão acrescenta:
+- Estrutura PWA (manifest + service worker).
+- Preparação para instalação como aplicativo em celular/tablet.
+- Cache dos arquivos da plataforma para uso offline depois do primeiro acesso por HTTPS.
+- Mantém o armazenamento local atual e o backup JSON existente.
+
+IMPORTANTE:
+1) Para instalar no celular/tablet, a plataforma precisa ser publicada em um endereço HTTPS.
+2) O sincronismo entre dispositivos (nuvem) ainda precisa de um banco online e autenticação. Esta etapa NÃO deve ser feita com uma senha embutida no HTML.
+3) A publicação online não deve substituir o armazenamento offline: os dois devem coexistir.
+
+TESTE LOCAL NO COMPUTADOR:
+- Execute SERVIDOR_LOCAL.cmd.
+- Abra http://localhost:8080 no Chrome.
+- O service worker será registrado e a estrutura PWA poderá ser testada.
+
+PRÓXIMA ETAPA:
+- Criar banco online seguro.
+- Criar autenticação dos profissionais.
+- Sincronizar pacientes, avaliações e treinos entre dispositivos.
+- Implementar fila de alterações offline e sincronização ao voltar a internet.
+- Fazer teste de conflito/duplicidade antes de colocar em produção.
