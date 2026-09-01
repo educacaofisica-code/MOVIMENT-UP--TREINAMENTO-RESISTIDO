@@ -4500,31 +4500,21 @@ setTimeout(render,200);setTimeout(render,800);
 
 
 
-<script id="moviment-up-supabase-sync-v9">
+<script id="moviment-up-supabase-sync-v10">
 (function(){
   'use strict';
 
-  /*
-   * MOVIMENT' UP V9 — OFFLINE-FIRST + SINCRONIZAÇÃO BIDIRECIONAL
-   *
-   * Fluxo:
-   *   TABLET OFFLINE -> armazenamento local -> internet -> SUPABASE
-   *   COMPUTADOR      <- SUPABASE <- sincronização <- TABLET
-   *
-   * Não cria uma tabela nova no Supabase. Usa as tabelas existentes
-   * "patients" e "assessments". Os demais registros relacionados a cada
-   * paciente são transportados dentro do campo data do paciente, em um
-   * pacote interno __movimentUpSyncBundle. Isso permite sincronizar o
-   * conjunto completo sem quebrar o esquema atual do banco.
-   *
-   * IMPORTANTE: mantém a mesma LOCAL_KEY da V8 para não apagar os dados
-   * locais já existentes no computador/tablet.
-   */
+  /* MOVIMENT' UP — sincronização bidirecional robusta.
+     O Supabase é a fonte compartilhada entre computador e tablet.
+     O localStorage continua sendo a base offline de cada dispositivo.
+     IMPORTANTE: na primeira sincronização desta versão, os dados remotos
+     são baixados antes de qualquer envio, evitando que os dados locais
+     antigos sobrescrevam os dados já existentes no Supabase. */
 
   const URL='https://rliqdzgeooekkskchjhz.supabase.co';
   const KEY='sb_publishable_e_8kwsxtECNu3poH0-JaBg_9nr8U9y9';
   const LOCAL_KEY='casa_david_moviment_up_v1';
-  const SNAP_KEY='casa_david_moviment_up_sync_snapshot_v9';
+  const SNAP_KEY='casa_david_moviment_up_sync_snapshot_v10';
   const TABLES=['patients','assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
   let syncing=false;
 
@@ -4540,7 +4530,7 @@ setTimeout(render,200);setTimeout(render,800);
   function localSave(){
     const d=ensureDB(); if(!d)return false;
     try{localStorage.setItem(LOCAL_KEY,JSON.stringify(d));return true}
-    catch(e){console.error('V9: falha ao salvar localmente',e);return false}
+    catch(e){console.error('SYNC: falha ao salvar localmente',e);return false}
   }
   function refresh(){
     try{if(typeof renderPatients==='function')renderPatients()}catch(e){}
@@ -4548,7 +4538,6 @@ setTimeout(render,200);setTimeout(render,800);
     try{if(typeof updateCounts==='function')updateCounts()}catch(e){}
     try{if(typeof renderHistory==='function')renderHistory()}catch(e){}
     try{if(typeof renderTraining==='function')renderTraining()}catch(e){}
-    try{if(typeof renderDashboard==='function')renderDashboard()}catch(e){}
   }
   function setStatus(type,text){try{window.__movimentUpSetStatus?.(type,text)}catch(e){}}
   function timeOf(x){
@@ -4557,9 +4546,9 @@ setTimeout(render,200);setTimeout(render,800);
   }
   function sig(x){try{return JSON.stringify(x)}catch(e){return String(x?.id||'')}}
   function patientIdOf(x){return x?.patientId==null?'':String(x.patientId)}
-
-  function readSnapshot(){
-    try{return JSON.parse(localStorage.getItem(SNAP_KEY)||'{}')}catch(e){return {}}
+  function readSnapshot(){try{return JSON.parse(localStorage.getItem(SNAP_KEY)||'{}')}catch(e){return {}}}
+  function hasSnapshot(){
+    try{return !!localStorage.getItem(SNAP_KEY)}catch(e){return false}
   }
   function writeSnapshot(){
     const d=ensureDB(); if(!d)return;
@@ -4571,9 +4560,7 @@ setTimeout(render,200);setTimeout(render,800);
     try{localStorage.setItem(SNAP_KEY,JSON.stringify(snap))}catch(e){}
   }
 
-  /* Marca apenas o que realmente mudou no dispositivo. Assim um aparelho
-     não reenvia todos os registros a cada abertura e não pisa em mudanças
-     feitas pelo outro aparelho. */
+  /* Após o primeiro ciclo, identifica somente mudanças feitas neste aparelho. */
   function stampChangedLocal(){
     const d=ensureDB(); if(!d)return {changed:new Set(),patientChanged:new Set()};
     const old=readSnapshot(); const changed=new Set(); const patientChanged=new Set();
@@ -4592,8 +4579,6 @@ setTimeout(render,200);setTimeout(render,800);
         }
       });
     });
-    /* Qualquer alteração de um registro filho torna o pacote do paciente
-       localmente mais novo. */
     patientChanged.forEach(pid=>{
       const p=(d.patients||[]).find(x=>String(x.id)===String(pid));
       if(p){if(!p.createdAt)p.createdAt=t;p.updatedAt=t}
@@ -4606,7 +4591,6 @@ setTimeout(render,200);setTimeout(render,800);
     const d=ensureDB(); if(!d)return [];
     return (d[table]||[]).filter(x=>patientIdOf(x)===String(pid)).map(clone);
   }
-
   function makeBundle(pid){
     return {
       version:1,
@@ -4619,14 +4603,12 @@ setTimeout(render,200);setTimeout(render,800);
       trainingCancellations:rowsForPatient('trainingCancellations',pid)
     };
   }
-
   function patientPayload(p){
     const x=clone(p)||{};
     delete x.__movimentUpSyncBundle;
     x.__movimentUpSyncBundle=makeBundle(String(p.id));
     return x;
   }
-
   function mergeRecord(table,remote){
     const d=ensureDB(); if(!d||!remote||remote.id==null)return false;
     if(!Array.isArray(d[table]))d[table]=[];
@@ -4637,7 +4619,6 @@ setTimeout(render,200);setTimeout(render,800);
     if(timeOf(r)>timeOf(l)){d[table][idx]=r;return true}
     return false;
   }
-
   function mergeBundle(bundle){
     const d=ensureDB(); if(!d||!bundle)return {added:0,updated:0};
     let added=0,updated=0;
@@ -4651,33 +4632,33 @@ setTimeout(render,200);setTimeout(render,800);
     });
     return {added,updated};
   }
-
   function mergeRemotePatient(row){
     const d=ensureDB(); if(!d||!row||row.id==null||!row.data)return false;
     const id=String(row.id), incoming=clone(row.data)||{};
     incoming.id=id;
     if(row.created_at&&!incoming.createdAt)incoming.createdAt=row.created_at;
     if(row.updated_at)incoming.updatedAt=row.updated_at;
+    const bundle=incoming.__movimentUpSyncBundle;
+    delete incoming.__movimentUpSyncBundle;
     const idx=d.patients.findIndex(x=>String(x.id)===id);
     let changed=false;
     if(idx<0){
-      delete incoming.__movimentUpSyncBundle;
       d.patients.push(incoming); changed=true;
+      if(bundle)mergeBundle(bundle);
     }else if(timeOf(incoming)>timeOf(d.patients[idx])){
-      const bundle=incoming.__movimentUpSyncBundle;
-      delete incoming.__movimentUpSyncBundle;
       d.patients[idx]=incoming; changed=true;
       if(bundle)mergeBundle(bundle);
-    }else{
-      const bundle=incoming.__movimentUpSyncBundle;
-      if(bundle)mergeBundle(bundle);
+    }else if(bundle){
+      mergeBundle(bundle);
     }
     return changed;
   }
 
+  /* Busca cada tabela separadamente. Se assessments tiver algum problema,
+     patients continua sincronizando normalmente. */
   async function getRemote(table){
     const r=await fetch(URL+'/rest/v1/'+table+'?select=id,data,created_at,updated_at&order=updated_at.asc',{method:'GET',headers:headers(),cache:'no-store'});
-    if(!r.ok)throw new Error(table+' GET '+r.status+' '+await r.text().catch(()=>''));
+    if(!r.ok)throw new Error(table+' GET '+r.status+' '+await r.text().catch(()=>'') );
     return await r.json();
   }
 
@@ -4685,91 +4666,103 @@ setTimeout(render,200);setTimeout(render,800);
     const d=ensureDB(); if(!d)return 0;
     const list=(d.patients||[]).filter(p=>p&&p.id!=null&&changedPatientIds.has(String(p.id)));
     if(!list.length)return 0;
-    const rows=list.map(p=>({
-      id:String(p.id),
-      data:patientPayload(p),
-      created_at:p.createdAt||now(),
-      updated_at:p.updatedAt||now()
-    }));
+    const rows=list.map(p=>({id:String(p.id),data:patientPayload(p),created_at:p.createdAt||now(),updated_at:p.updatedAt||now()}));
     const r=await fetch(URL+'/rest/v1/patients?on_conflict=id',{method:'POST',headers:headers({'Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(rows)});
-    if(!r.ok)throw new Error('patients UPSERT '+r.status+' '+await r.text().catch(()=>''));
+    if(!r.ok)throw new Error('patients UPSERT '+r.status+' '+await r.text().catch(()=>'') );
     return rows.length;
   }
-
   async function upsertAssessments(changedKeys){
     const d=ensureDB(); if(!d)return 0;
     const list=(d.assessments||[]).filter(a=>a&&a.id!=null&&changedKeys.has('assessments:'+String(a.id)));
     if(!list.length)return 0;
     const rows=list.map(a=>({id:String(a.id),data:clone(a),created_at:a.createdAt||now(),updated_at:a.updatedAt||now()}));
     const r=await fetch(URL+'/rest/v1/assessments?on_conflict=id',{method:'POST',headers:headers({'Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(rows)});
-    if(!r.ok)throw new Error('assessments UPSERT '+r.status+' '+await r.text().catch(()=>''));
+    if(!r.ok)throw new Error('assessments UPSERT '+r.status+' '+await r.text().catch(()=>'') );
     return rows.length;
   }
 
   async function syncNow(reason){
-    if(syncing)return;
+    if(syncing||navigator.onLine===false)return;
     const d=ensureDB(); if(!d)return;
     syncing=true;
-    setStatus('syncing','ONLINE • sincronizando tablet/computador...');
+    setStatus('syncing','ONLINE • sincronizando com Supabase...');
     try{
-      /* Primeiro marca as mudanças feitas OFFLINE neste dispositivo. */
-      const localChanges=stampChangedLocal();
-      const changedKeys=new Set(localChanges.changed);
-      const changedPatientIds=new Set(localChanges.patientChanged);
+      const firstSync=!hasSnapshot();
+      let remotePatients=[];
+      let remoteAssessments=[];
 
-      /* Depois baixa o servidor. O registro mais novo vence. */
-      const [remotePatients,remoteAssessments]=await Promise.all([getRemote('patients'),getRemote('assessments')]);
+      /* PRIMEIRO: baixa pacientes. Isso é obrigatório para a sincronização
+         tablet/computador e não depende da tabela assessments. */
+      remotePatients=await getRemote('patients');
       let remotePatientChanges=0;
       for(const row of remotePatients){if(mergeRemotePatient(row))remotePatientChanges++}
 
-      for(const row of remoteAssessments){
-        if(!row||row.id==null||!row.data)continue;
-        const r=clone(row.data);r.id=String(row.id);if(row.created_at&&!r.createdAt)r.createdAt=row.created_at;if(row.updated_at)r.updatedAt=row.updated_at;
-        mergeRecord('assessments',r);
+      /* assessments é complementar: se falhar, pacientes continuam sincronizados. */
+      try{
+        remoteAssessments=await getRemote('assessments');
+        for(const row of remoteAssessments){
+          if(!row||row.id==null||!row.data)continue;
+          const r=clone(row.data);r.id=String(row.id);
+          if(row.created_at&&!r.createdAt)r.createdAt=row.created_at;
+          if(row.updated_at)r.updatedAt=row.updated_at;
+          mergeRecord('assessments',r);
+        }
+      }catch(e){
+        console.warn('SYNC: assessments não pôde ser sincronizado; patients continua normal.',e);
       }
 
-      /* Tudo que chegou do servidor foi incorporado localmente antes do envio.
-         Recalcula a lista de mudanças, mas não considera o que acabou de ser
-         baixado como alteração do usuário. Para isso, comparamos com o snapshot
-         original e só enviamos os IDs que já estavam alterados localmente. */
-      if(remotePatientChanges)localSave();
+      if(remotePatientChanges||remoteAssessments.length)localSave();
       refresh();
 
-      const pushedPatients=await upsertPatients(changedPatientIds);
-      const pushedAssessments=await upsertAssessments(changedKeys);
-
-      /* Agora o estado local representa exatamente o último estado sincronizado. */
-      writeSnapshot();
-      localSave();
-      setStatus('online','ONLINE • sincronizado com Supabase');
-      console.log('Moviment Up V9 — sincronização concluída',{reason,remotePatients:remotePatients.length,remoteAssessments:remoteAssessments.length,pushedPatients,pushedAssessments});
+      /* Primeira sincronização: os dados remotos acabaram de ser incorporados.
+         Não envia os dados locais antigos por cima deles. A partir do próximo
+         ciclo, o snapshot identifica somente alterações reais do dispositivo. */
+      let changedKeys=new Set();
+      let changedPatientIds=new Set();
+      if(!firstSync){
+        const localChanges=stampChangedLocal();
+        changedKeys=localChanges.changed;
+        changedPatientIds=localChanges.patientChanged;
+        const pushedPatients=await upsertPatients(changedPatientIds);
+        let pushedAssessments=0;
+        try{pushedAssessments=await upsertAssessments(changedKeys)}catch(e){console.warn('SYNC: assessments não enviado.',e)}
+        writeSnapshot();
+        localSave();
+        setStatus('online','ONLINE • sincronizado com Supabase');
+        console.log('Moviment Up — sincronização concluída',{reason,remotePatients:remotePatients.length,remoteAssessments:remoteAssessments.length,pushedPatients,pushedAssessments});
+      }else{
+        writeSnapshot();
+        localSave();
+        setStatus('online','ONLINE •  '+remotePatients.length+' pacientes sincronizados');
+        console.log('Moviment Up — primeira sincronização concluída',{reason,remotePatients:remotePatients.length,remoteAssessments:remoteAssessments.length});
+      }
       refresh();
     }catch(err){
-      console.error('Moviment Up V9 — sincronização falhou',err);
+      console.error('Moviment Up — sincronização falhou',err);
       if(navigator.onLine===false)setStatus('offline','OFFLINE • dados salvos neste dispositivo');
-      else setStatus('error','ONLINE • não foi possível sincronizar agora');
+      else setStatus('error','ONLINE • erro ao sincronizar: '+(err.message||'verifique a conexão'));
     }finally{syncing=false}
   }
 
-  /* Um único wrapper de persistência. O salvamento local nunca depende da internet. */
+  /* O salvamento local continua funcionando sem internet. Depois de salvar,
+     tenta sincronizar automaticamente quando houver conexão. */
   const originalPersist=window.persist;
-  if(typeof originalPersist==='function'&&!window.__movimentUpPersistV9){
-    window.__movimentUpPersistV9=true;
+  if(typeof originalPersist==='function'&&!window.__movimentUpPersistV10){
+    window.__movimentUpPersistV10=true;
     window.persist=function(){
       const result=originalPersist.apply(this,arguments);
-      if(result!==false)setTimeout(()=>syncNow('alteração salva localmente'),250);
+      if(result!==false&&navigator.onLine)setTimeout(()=>syncNow('alteração salva localmente'),300);
       return result;
     };
   }
 
-  window.syncMovimentUpV9=()=>syncNow('manual');
-  window.addEventListener('online',()=>setTimeout(()=>syncNow('internet restaurada'),500));
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(()=>syncNow('retorno à plataforma'),500)});
-  window.addEventListener('load',()=>setTimeout(()=>syncNow('abertura da plataforma'),1000));
-
-  /* Compatibilidade com o botão/rotinas de sincronização existentes. */
+  window.syncMovimentUpV10=()=>syncNow('manual');
+  window.syncMovimentUpV9=()=>syncNow('compatibilidade V9');
   window.syncBidirectionalV7=()=>syncNow('compatibilidade V7');
   window.syncAllPatientsToSupabase=()=>syncNow('compatibilidade');
+  window.addEventListener('online',()=>setTimeout(()=>syncNow('internet restaurada'),700));
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&navigator.onLine)setTimeout(()=>syncNow('retorno à plataforma'),700)});
+  window.addEventListener('load',()=>setTimeout(()=>syncNow('abertura da plataforma'),1200));
 
 })();
 </script>
