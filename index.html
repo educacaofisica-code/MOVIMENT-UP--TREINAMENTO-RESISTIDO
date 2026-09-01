@@ -4500,7 +4500,7 @@ setTimeout(render,200);setTimeout(render,800);
 
 
 
-<script id="moviment-up-supabase-sync-v10">
+<script id="moviment-up-supabase-sync-v11">
 (function(){
   'use strict';
 
@@ -4514,7 +4514,7 @@ setTimeout(render,200);setTimeout(render,800);
   const URL='https://rliqdzgeooekkskchjhz.supabase.co';
   const KEY='sb_publishable_e_8kwsxtECNu3poH0-JaBg_9nr8U9y9';
   const LOCAL_KEY='casa_david_moviment_up_v1';
-  const SNAP_KEY='casa_david_moviment_up_sync_snapshot_v10';
+  const SNAP_KEY='casa_david_moviment_up_sync_snapshot_v11';
   const TABLES=['patients','assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
   let syncing=false;
 
@@ -4609,6 +4609,99 @@ setTimeout(render,200);setTimeout(render,800);
     x.__movimentUpSyncBundle=makeBundle(String(p.id));
     return x;
   }
+
+  /* Identidade clínica: o nome normalizado é usado apenas para reconhecer
+     o mesmo paciente quando um dispositivo criou um ID local diferente.
+     O ID do Supabase continua sendo o ID canônico quando houver correspondência. */
+  function normalizePatientName(name){
+    return String(name||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ');
+  }
+  function patientMatchKey(p){
+    const n=normalizePatientName(p?.name);
+    if(!n)return '';
+    const internal=String(p?.internalId||'').trim().toLowerCase();
+    return internal ? n+'|'+internal : n;
+  }
+  function mergePatientFields(base,extra){
+    const out=clone(base)||{};
+    const src=clone(extra)||{};
+    const protectedKeys=new Set(['id','createdAt','updatedAt','__movimentUpSyncBundle']);
+    Object.keys(src).forEach(k=>{
+      if(protectedKeys.has(k))return;
+      const v=src[k];
+      const empty=v==null || (typeof v==='string' && !v.trim()) || (Array.isArray(v)&&!v.length);
+      const cur=out[k];
+      const curEmpty=cur==null || (typeof cur==='string' && !cur.trim()) || (Array.isArray(cur)&&!cur.length);
+      if(curEmpty && !empty)out[k]=clone(v);
+    });
+    /* Campos clínicos/observações podem existir em versões diferentes.
+       Se ambos existirem, preserva o conjunto sem apagar informações. */
+    ['functionalConditions','diagnosisRecords','deficiency','diagnoses'].forEach(k=>{
+      if(Array.isArray(src[k]) && src[k].length){
+        const a=Array.isArray(out[k])?out[k]:[];
+        const seen=new Set(a.map(x=>typeof x==='object'?JSON.stringify(x):String(x)));
+        src[k].forEach(x=>{const key=typeof x==='object'?JSON.stringify(x):String(x);if(!seen.has(key)){a.push(clone(x));seen.add(key)}});
+        out[k]=a;
+      }
+    });
+    return out;
+  }
+  function reassignPatientLinks(fromId,toId){
+    const d=ensureDB(); if(!d||String(fromId)===String(toId))return 0;
+    let changed=0;
+    TABLES.filter(t=>t!=='patients').forEach(table=>{
+      (d[table]||[]).forEach(r=>{
+        if(r&&String(r.patientId)===String(fromId)){r.patientId=String(toId);r.updatedAt=now();changed++}
+      });
+    });
+    return changed;
+  }
+  function consolidateLocalPatients(remotePatients){
+    const d=ensureDB(); if(!d)return {changed:false,duplicates:0};
+    const remByKey=new Map();
+    (remotePatients||[]).forEach(row=>{
+      const p=clone(row?.data)||{}; if(row?.id==null||!p.name)return;
+      p.id=String(row.id);
+      if(row.created_at&&!p.createdAt)p.createdAt=row.created_at;
+      if(row.updated_at)p.updatedAt=row.updated_at;
+      const key=patientMatchKey(p);
+      if(key&&!remByKey.has(key))remByKey.set(key,p);
+    });
+    const byKey=new Map(), keep=[], aliases=new Map();
+    let duplicates=0, changed=false;
+    (d.patients||[]).forEach(p=>{
+      if(!p||p.id==null){return}
+      const key=patientMatchKey(p);
+      const remote=key?remByKey.get(key):null;
+      let canonical=remote||null;
+      if(canonical){
+        const existing=byKey.get(key);
+        if(!existing){
+          const merged=mergePatientFields(canonical,p);
+          merged.id=String(canonical.id);
+          keep.push(merged); byKey.set(key,merged);
+          if(String(p.id)!==String(canonical.id)){aliases.set(String(p.id),String(canonical.id));changed=true}
+        }else{
+          const merged=mergePatientFields(existing,p);
+          Object.assign(existing,merged);
+          if(String(p.id)!==String(existing.id)){aliases.set(String(p.id),String(existing.id));duplicates++;changed=true}
+        }
+        return;
+      }
+      if(key&&byKey.has(key)){
+        const existing=byKey.get(key);
+        Object.assign(existing,mergePatientFields(existing,p));
+        aliases.set(String(p.id),String(existing.id));
+        duplicates++; changed=true; return;
+      }
+      const cp=clone(p);
+      keep.push(cp);
+      if(key)byKey.set(key,cp);
+    });
+    aliases.forEach((to,from)=>{reassignPatientLinks(from,to)});
+    if(keep.length!==(d.patients||[]).length){d.patients=keep;changed=true}
+    return {changed,duplicates,aliases:aliases.size};
+  }
   function mergeRecord(table,remote){
     const d=ensureDB(); if(!d||!remote||remote.id==null)return false;
     if(!Array.isArray(d[table]))d[table]=[];
@@ -4694,8 +4787,15 @@ setTimeout(render,200);setTimeout(render,800);
       /* PRIMEIRO: baixa pacientes. Isso é obrigatório para a sincronização
          tablet/computador e não depende da tabela assessments. */
       remotePatients=await getRemote('patients');
+      /* Antes de mesclar por ID, consolida os IDs locais que representam o
+         mesmo paciente. Assim, os 52 cadastros locais antigos não viram
+         duplicatas quando os 108 registros compartilhados chegam do servidor. */
+      const consolidated=consolidateLocalPatients(remotePatients);
       let remotePatientChanges=0;
       for(const row of remotePatients){if(mergeRemotePatient(row))remotePatientChanges++}
+      /* Uma segunda consolidação captura casos em que o paciente remoto foi
+         inserido após a primeira passada e garante uma única identidade local. */
+      const consolidatedAfter=consolidateLocalPatients(remotePatients);
 
       /* assessments é complementar: se falhar, pacientes continuam sincronizados. */
       try{
@@ -4734,7 +4834,7 @@ setTimeout(render,200);setTimeout(render,800);
         writeSnapshot();
         localSave();
         setStatus('online','ONLINE •  '+remotePatients.length+' pacientes sincronizados');
-        console.log('Moviment Up — primeira sincronização concluída',{reason,remotePatients:remotePatients.length,remoteAssessments:remoteAssessments.length});
+        console.log('Moviment Up — primeira sincronização concluída',{reason,remotePatients:remotePatients.length,remoteAssessments:remoteAssessments.length,duplicatasConsolidadas:(consolidated.duplicates||0)+(consolidatedAfter.duplicates||0)});
       }
       refresh();
     }catch(err){
