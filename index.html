@@ -4867,6 +4867,38 @@ setTimeout(render,200);setTimeout(render,800);
 })();
 </script>
 
+
+<script id="moviment-up-auto-sync-v12">
+(function(){
+  'use strict';
+  /* V12: sincronização automática periódica entre dispositivos.
+     O REST continua sendo a fonte compartilhada; o aparelho mantém o offline.
+     Não altera nem apaga dados. */
+  function run(){
+    try{
+      if(navigator.onLine && typeof window.syncMovimentUpV10==='function'){
+        window.syncMovimentUpV10();
+      }
+    }catch(e){console.warn('Moviment Up auto-sync:',e)}
+  }
+  /* Atualiza periodicamente mesmo sem recarregar a página. */
+  setInterval(run,15000);
+  /* Após qualquer salvamento de paciente, verifica o servidor sem exigir F5. */
+  setTimeout(function(){
+    try{
+      if(typeof window.savePatient==='function' && !window.__movimentUpAutoSaveV12){
+        const old=window.savePatient;
+        window.__movimentUpAutoSaveV12=true;
+        window.savePatient=function(){
+          const result=old.apply(this,arguments);
+          setTimeout(run,1200);
+          return result;
+        };
+      }
+    }catch(e){console.warn('Moviment Up save hook:',e)}
+  },100);
+})();
+</script>
 <script src="pwa-bridge.js"></script>
 </body>
 </html>
