@@ -4500,7 +4500,7 @@ setTimeout(render,200);setTimeout(render,800);
 
 
 
-<script id="moviment-up-supabase-sync-v11">
+<script id="moviment-up-supabase-sync-v16">
 (function(){
   'use strict';
 
@@ -4514,7 +4514,7 @@ setTimeout(render,200);setTimeout(render,800);
   const URL='https://rliqdzgeooekkskchjhz.supabase.co';
   const KEY='sb_publishable_e_8kwsxtECNu3poH0-JaBg_9nr8U9y9';
   const LOCAL_KEY='casa_david_moviment_up_v1';
-  const SNAP_KEY='casa_david_moviment_up_sync_snapshot_v11';
+  const SNAP_KEY='casa_david_moviment_up_sync_snapshot_v16';
   const TABLES=['patients','assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
   let syncing=false;
 
@@ -4783,7 +4783,7 @@ setTimeout(render,200);setTimeout(render,800);
        O cache é desativado pelos headers/fetch; não usamos parâmetros
        artificiais como _sync, pois o Supabase interpreta parâmetros
        desconhecidos como filtros e pode retornar PGRST100. */
-    const endpoint=URL+'/rest/v1/'+table+'?select=id,data,created_at,updated_at&order=updated_at.asc';
+    const endpoint=URL+'/rest/v1/'+table+'?select=id,data,created_at,updated_at&order=updated_at.asc&limit=1000';
     const r=await fetch(endpoint,{
       method:'GET',
       headers:headers({'Cache-Control':'no-cache','Pragma':'no-cache'}),
