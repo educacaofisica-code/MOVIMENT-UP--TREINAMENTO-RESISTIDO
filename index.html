@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Casa de David — Moviment' Up | Chrome</title>
+<title>Casa de David — Moviment' Up</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0f4c5c">
 <meta name="mobile-web-app-capable" content="yes">
@@ -4976,196 +4976,245 @@ setTimeout(render,200);setTimeout(render,800);
 </script>
 <script src="pwa-bridge.js"></script>
 
-<script id="moviment-up-chrome-delete-sync-fix">
+<script id="moviment-up-delete-tombstone-v3">
 (function(){
   'use strict';
 
-  const DELETE_KEY = 'casa_david_moviment_up_deleted_v1';
-  const SYNC_SNAPSHOT_KEY = 'casa_david_moviment_up_sync_snapshot_v16';
-  const SB_URL = 'https://rliqdzgeooekkskchjhz.supabase.co';
-  const SB_KEY = 'sb_publishable_e_8kwsxtECNu3poH0-JaBg_9nr8U9y9';
+  /*
+   * V3 — EXCLUSÃO PERSISTENTE ENTRE DISPOSITIVOS
+   *
+   * A sincronização original usa UPSERT para salvar e GET para baixar.
+   * Portanto, apagar somente o localStorage não é suficiente: como a linha
+   * continua no Supabase, o próximo GET a traz de volta.
+   *
+   * Nesta camada a exclusão vira uma "tombstone" no próprio registro remoto:
+   * data.__movimentUpDeleted = true.
+   * Assim, o registro deixa de ser uma fonte válida para sincronização.
+   *
+   * Mantemos a linha no Supabase em vez de depender de DELETE/RLS. Isso é
+   * deliberado: o salvamento já usa UPSERT e normalmente tem permissão,
+   * enquanto DELETE pode ser bloqueado pelas políticas do Supabase.
+   */
 
-  function dbx(){ try{return (typeof db!=='undefined')?db:window.db}catch(e){return window.db||null} }
-  function clone(x){try{return JSON.parse(JSON.stringify(x))}catch(e){return x}}
-  function getDeleted(){
-    try{return JSON.parse(localStorage.getItem(DELETE_KEY)||'[]')}catch(e){return []}
+  const URL=window.SUPABASE_URL||'https://rliqdzgeooekkskchjhz.supabase.co';
+  const KEY=window.SUPABASE_KEY||'sb_publishable_e_8kwsxtECNu3poH0-JaBg_9nr8U9y9';
+  const PENDING='moviment_up_delete_tombstones_v3';
+  const HDR={
+    'apikey':KEY,
+    'Authorization':'Bearer '+KEY,
+    'Content-Type':'application/json'
+  };
+
+  function dbase(){
+    try{return (typeof db!=='undefined')?db:window.db}catch(e){return window.db}
   }
-  function setDeleted(a){
-    try{localStorage.setItem(DELETE_KEY,JSON.stringify([...new Set(a.map(String))]))}catch(e){}
-  }
-  function addDeleted(pid){
-    const a=getDeleted(); a.push(String(pid)); setDeleted(a);
-  }
-  function headers(){
-    return {apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':'application/json'};
-  }
-  function localPersist(){
+  function pending(){
     try{
-      if(typeof persist==='function') return persist();
-      const d=dbx(); if(!d)return false;
-      localStorage.setItem('casa_david_moviment_up_v1',JSON.stringify(d));
+      const x=JSON.parse(localStorage.getItem(PENDING)||'[]');
+      return Array.isArray(x)?x.map(String):[];
+    }catch(e){return []}
+  }
+  function setPending(a){
+    try{localStorage.setItem(PENDING,JSON.stringify([...new Set(a.map(String))]))}catch(e){}
+  }
+  function addPending(id){
+    const a=pending(); if(!a.includes(String(id)))a.push(String(id));setPending(a);
+  }
+  function done(id){setPending(pending().filter(x=>x!==String(id)))}
+
+  function localSave(){
+    try{
+      if(typeof persist==='function')return persist();
+      localStorage.setItem('casa_david_moviment_up_v1',JSON.stringify(dbase()));
       return true;
-    }catch(e){console.error(e);return false}
+    }catch(e){console.warn(e);return false}
   }
-  function refreshUI(){
-    try{if(typeof renderPatients==='function')renderPatients()}catch(e){}
-    try{if(typeof populateSelects==='function')populateSelects()}catch(e){}
-    try{if(typeof updateCounts==='function')updateCounts()}catch(e){}
-    try{if(typeof renderHistory==='function')renderHistory()}catch(e){}
+  function refresh(){
+    try{renderPatients?.()}catch(e){}
+    try{populateSelects?.()}catch(e){}
+    try{updateCounts?.()}catch(e){}
+    try{renderHistory?.()}catch(e){}
   }
-
-  async function remoteDeletePatient(pid){
-    const id=encodeURIComponent(String(pid));
-    const r=await fetch(SB_URL+'/rest/v1/patients?id=eq.'+id,{
-      method:'DELETE',
-      headers:Object.assign(headers(),{'Prefer':'return=minimal'}),
-      cache:'no-store',
-      credentials:'omit'
+  function removeLocal(id){
+    const d=dbase(); if(!d)return;
+    const pid=String(id);
+    ['patients','assessments','training','trainingPlans','trainingProgressions',
+     'trainingSchedules','trainingAttendance','aerobicLogs',
+     'trainingCancellations'].forEach(k=>{
+       if(Array.isArray(d[k])){
+         d[k]=d[k].filter(x=>String(x?.id)!==pid && String(x?.patientId)!==pid);
+       }
     });
-    if(!r.ok) throw new Error('Exclusão no Supabase falhou: '+r.status+' '+await r.text().catch(()=>''));
-  }
-
-  async function remoteDeleteAssessment(id){
-    const r=await fetch(SB_URL+'/rest/v1/assessments?id=eq.'+encodeURIComponent(String(id)),{
-      method:'DELETE',headers:Object.assign(headers(),{'Prefer':'return=minimal'}),
-      cache:'no-store',credentials:'omit'
-    });
-    if(!r.ok) throw new Error('Exclusão da avaliação no Supabase falhou: '+r.status);
-  }
-
-  async function syncDeleted(){
-    if(!navigator.onLine)return;
-    const ids=getDeleted();
-    if(!ids.length)return;
-    const remaining=[];
-    for(const pid of ids){
-      try{
-        await remoteDeletePatient(pid);
-      }catch(e){
-        console.warn('Moviment Up: exclusão pendente',pid,e);
-        remaining.push(pid);
-      }
+    if(typeof currentTrainingPatientId!=='undefined'&&String(currentTrainingPatientId)===pid){
+      currentTrainingPatientId=''; currentTrainingPlan=null;
     }
-    setDeleted(remaining);
-    try{
-      if(window.__movimentUpSetStatus && remaining.length===0)
-        window.__movimentUpSetStatus('online','ONLINE • sincronizado com Supabase');
-    }catch(e){}
+    if(typeof currentPatientEditId!=='undefined'&&String(currentPatientEditId)===pid)
+      currentPatientEditId=null;
+    localSave(); refresh();
+  }
+
+  async function remoteTombstone(id){
+    const pid=String(id);
+    const get=await fetch(
+      URL+'/rest/v1/patients?select=id,data,created_at,updated_at&id=eq.'+encodeURIComponent(pid),
+      {headers:Object.assign({},HDR,{'Cache-Control':'no-cache'}),cache:'no-store',credentials:'omit'}
+    );
+    if(!get.ok)throw new Error('consulta do paciente: '+get.status+' '+await get.text().catch(()=>''));
+    const rows=await get.json();
+    if(!Array.isArray(rows)||!rows.length){
+      // Se já não existir no servidor, a exclusão está efetivamente concluída.
+      return;
+    }
+    const row=rows[0];
+    const data=(row.data&&typeof row.data==='object')?JSON.parse(JSON.stringify(row.data)):{};
+    data.__movimentUpDeleted=true;
+    data.__movimentUpDeletedAt=new Date().toISOString();
+
+    const r=await fetch(
+      URL+'/rest/v1/patients?id=eq.'+encodeURIComponent(pid),
+      {
+        method:'PATCH',
+        headers:Object.assign({},HDR,{'Prefer':'return=minimal'}),
+        body:JSON.stringify({data,updated_at:new Date().toISOString()}),
+        cache:'no-store',
+        credentials:'omit'
+      }
+    );
+    if(!r.ok)throw new Error('marca de exclusão no Supabase: '+r.status+' '+await r.text().catch(()=>''));
+  }
+
+  async function getRemotePatients(){
+    const r=await fetch(
+      URL+'/rest/v1/patients?select=id,data,created_at,updated_at&order=updated_at.asc&limit=1000',
+      {headers:Object.assign({},HDR,{'Cache-Control':'no-cache','Pragma':'no-cache'}),cache:'no-store',credentials:'omit'}
+    );
+    if(!r.ok)throw new Error('leitura patients: '+r.status);
+    const x=await r.json();
+    return Array.isArray(x)?x:[];
   }
 
   /*
-   * Propaga exclusões feitas em outro dispositivo.
-   * Só considera como "removido remotamente" algo que existia no snapshot
-   * anterior deste dispositivo. Assim não transforma uma primeira sincronização
-   * incompleta em exclusões acidentais.
+   * Remove do aparelho qualquer paciente que o servidor marcou como excluído.
+   * Isso roda DEPOIS da sincronização antiga, então mesmo que o código antigo
+   * o tenha baixado por engano, ele é retirado novamente antes de ficar na tela.
    */
-  async function applyRemoteDeletions(remoteRows){
-    const d=dbx(); if(!d)return;
-    let snap={};
-    try{snap=JSON.parse(localStorage.getItem(SYNC_SNAPSHOT_KEY)||'{}')}catch(e){snap={}}
-    const known=Object.keys(snap.patients||{});
-    if(!known.length)return;
+  async function purgeRemoteTombstones(){
+    if(!navigator.onLine)return;
+    let rows;
+    try{rows=await getRemotePatients()}catch(e){return}
+    const deleted=new Set(
+      rows.filter(r=>r?.data?.__movimentUpDeleted===true).map(r=>String(r.id))
+    );
+    if(!deleted.size)return;
 
-    const remoteIds=new Set((remoteRows||[]).map(r=>String(r.id)));
-    const deleted = known.filter(id=>!remoteIds.has(id));
-    if(!deleted.length)return;
-
+    const d=dbase(); if(!d)return;
     let changed=false;
-    for(const pid of deleted){
-      const beforeP=(d.patients||[]).length;
-      d.patients=(d.patients||[]).filter(p=>String(p.id)!==String(pid));
-      if(d.patients.length!==beforeP)changed=true;
-
-      ['assessments','training','trainingPlans','trainingProgressions',
-       'trainingSchedules','trainingAttendance','aerobicLogs',
-       'trainingCancellations'].forEach(k=>{
-        if(Array.isArray(d[k])){
-          const before=d[k].length;
-          d[k]=d[k].filter(x=>String(x.patientId)!==String(pid));
-          if(d[k].length!==before)changed=true;
-        }
-      });
+    if(Array.isArray(d.patients)){
+      const before=d.patients.length;
+      d.patients=d.patients.filter(p=>!deleted.has(String(p?.id)));
+      changed=d.patients.length!==before;
     }
-    if(changed){
-      localPersist();
-      refreshUI();
-    }
+    ['assessments','training','trainingPlans','trainingProgressions',
+     'trainingSchedules','trainingAttendance','aerobicLogs',
+     'trainingCancellations'].forEach(k=>{
+      if(Array.isArray(d[k])){
+        const before=d[k].length;
+        d[k]=d[k].filter(x=>!deleted.has(String(x?.patientId)));
+        if(d[k].length!==before)changed=true;
+      }
+    });
+    if(changed){localSave();refresh();}
   }
 
-  // Replace the existing complete-delete function with a safer version that
-  // preserves the current UI and also creates a sync tombstone.
-  window.__movimentUpDeleteFixReady = true;
-  window.deletePatient = async function(pid){
-    const d=dbx(); if(!d)return;
-    const p=(d.patients||[]).find(x=>String(x.id)===String(pid));
+  async function process(){
+    const ids=pending();
+    if(!ids.length)return;
+    for(const id of ids){
+      try{
+        if(navigator.onLine){
+          await remoteTombstone(id);
+          done(id);
+        }
+      }catch(e){
+        console.warn('Moviment Up — exclusão pendente:',id,e);
+      }
+      removeLocal(id);
+    }
+    await purgeRemoteTombstones();
+  }
+
+  const previousDelete=window.deletePatient;
+
+  /*
+   * Importantíssimo: perguntamos/confirmamos UMA vez pela função original,
+   * mas registramos a exclusão antes da próxima sincronização.
+   */
+  window.deletePatient=async function(pid){
+    const d=dbase();
+    const p=(d?.patients||[]).find(x=>String(x?.id)===String(pid));
     if(!p)return;
 
-    const keys=['assessments','training','trainingPlans','trainingProgressions',
-      'trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
-    const total=keys.reduce((n,k)=>n+(Array.isArray(d[k])?d[k].filter(x=>String(x.patientId)===String(pid)).length:0),0);
-
-    if(!confirm(
-      'APAGAR CADASTRO COMPLETO?\\n\\n'+
-      'Paciente: '+p.name+'\\n\\n'+
-      'Serão apagados o cadastro e os '+total+' registros vinculados, quando existirem.\\n\\n'+
-      'Esta ação não pode ser desfeita.\\n\\nDeseja continuar?'
-    )) return;
-
-    // Local deletion first: works offline and is immediate.
-    d.patients=(d.patients||[]).filter(x=>String(x.id)!==String(pid));
-    keys.forEach(k=>{
-      if(Array.isArray(d[k])) d[k]=d[k].filter(x=>String(x.patientId)!==String(pid));
-    });
-
-    addDeleted(pid);
-    if(typeof currentTrainingPatientId!=='undefined' && String(currentTrainingPatientId)===String(pid)){
-      currentTrainingPatientId=''; if(typeof currentTrainingPlan!=='undefined')currentTrainingPlan=null;
-    }
-    if(typeof currentPatientEditId!=='undefined' && String(currentPatientEditId)===String(pid))currentPatientEditId=null;
-
-    localPersist();
-    try{if(document.getElementById('tPatient'))document.getElementById('tPatient').value=''}catch(e){}
-    try{if(document.getElementById('sPatient'))document.getElementById('sPatient').value=''}catch(e){}
-    try{if(document.getElementById('aPatient'))document.getElementById('aPatient').value=''}catch(e){}
-    try{if(document.getElementById('hPatient'))document.getElementById('hPatient').value=''}catch(e){}
-    refreshUI();
-
-    if(navigator.onLine){
-      try{
-        await remoteDeletePatient(pid);
-        setDeleted(getDeleted().filter(x=>String(x)!==String(pid)));
-        try{window.__movimentUpSetStatus?.('online','ONLINE • exclusão sincronizada')}catch(e){}
-        alert('Cadastro de '+p.name+' apagado com sucesso e removido da sincronização.');
-      }catch(e){
-        console.warn(e);
-        try{window.__movimentUpSetStatus?.('syncing','ONLINE • exclusão aguardando sincronização')}catch(x){}
-        alert('Cadastro apagado deste dispositivo. A exclusão ficou pendente e será enviada ao Supabase automaticamente.');
-      }
+    // A função original faz as duas confirmações e a remoção local.
+    // Só continuamos se ela realmente executar. Como não retorna boolean,
+    // detectamos pelo cadastro local.
+    const before=!!(d.patients||[]).find(x=>String(x.id)===String(pid));
+    if(typeof previousDelete==='function'){
+      try{await previousDelete(pid)}catch(e){console.warn(e)}
     }else{
-      try{window.__movimentUpSetStatus?.('offline','OFFLINE • exclusão salva neste dispositivo')}catch(e){}
-      alert('Cadastro de '+p.name+' apagado deste dispositivo. Quando a internet voltar, a exclusão será sincronizada.');
+      if(!confirm('Deseja apagar o cadastro de '+p.name+'?'))return;
+      removeLocal(pid);
+    }
+
+    const afterDB=dbase();
+    const stillThere=!!(afterDB?.patients||[]).find(x=>String(x.id)===String(pid));
+
+    // Se o usuário cancelou a confirmação da função original, não criamos
+    // nenhuma marca de exclusão.
+    if(before && !stillThere){
+      addPending(pid);
+      if(navigator.onLine){
+        await process();
+        if(pending().includes(String(pid))){
+          try{window.__movimentUpSetStatus?.('error','ERRO • exclusão aguardando Supabase')}catch(e){}
+          alert('O cadastro foi apagado deste aparelho, mas o Supabase não confirmou a exclusão. O sistema continuará tentando.');
+        }else{
+          try{window.__movimentUpSetStatus?.('online','ONLINE • exclusão sincronizada')}catch(e){}
+        }
+      }else{
+        try{window.__movimentUpSetStatus?.('offline','OFFLINE • exclusão será sincronizada')}catch(e){}
+        alert('Cadastro apagado neste aparelho. Quando a internet voltar, a exclusão será sincronizada.');
+      }
     }
   };
 
-  // Hook into the existing sync function without replacing its main logic.
-  const oldSync = window.syncMovimentUpV10;
-  if(typeof oldSync==='function' && !window.__movimentUpDeleteSyncHook){
-    window.__movimentUpDeleteSyncHook=true;
-    window.syncMovimentUpV10 = async function(reason){
-      try{
-        if(navigator.onLine && typeof fetch==='function'){
-          // First remove explicit local tombstones.
-          await syncDeleted();
-        }
-      }catch(e){console.warn('Moviment Up delete sync:',e)}
-      const result = await oldSync(reason||'sincronização');
+  /*
+   * O sync original continua responsável pelo fluxo normal.
+   * Depois dele, esta camada elimina qualquer tombstone que tenha sido baixado.
+   */
+  const oldSync=window.syncMovimentUpV10;
+  if(typeof oldSync==='function'&&!window.__deleteTombstoneV3Hook){
+    window.__deleteTombstoneV3Hook=true;
+    window.syncMovimentUpV10=async function(reason){
+      await process();
+      const result=await oldSync(reason||'sincronização');
+      await purgeRemoteTombstones();
+      await process();
       return result;
     };
   }
 
-  window.addEventListener('online',()=>setTimeout(syncDeleted,1200));
-  window.addEventListener('load',()=>setTimeout(syncDeleted,1800));
-  setInterval(()=>{if(navigator.onLine)syncDeleted()},15000);
+  setInterval(async()=>{
+    if(navigator.onLine){
+      await process();
+      await purgeRemoteTombstones();
+    }else{
+      // Mesmo offline, exclusões pendentes não podem reaparecer localmente.
+      pending().forEach(removeLocal);
+    }
+  },5000);
+
+  window.addEventListener('online',()=>setTimeout(process,700));
+  window.addEventListener('load',()=>setTimeout(async()=>{await process();await purgeRemoteTombstones()},1800));
 
 })();
 </script>
