@@ -4879,38 +4879,25 @@ setTimeout(render,200);setTimeout(render,800);
 </script>
 
 
-<script id="moviment-up-auto-sync-v12">
+<script id="moviment-up-auto-sync-v14">
 (function(){
   'use strict';
-  /* V12: sincronização automática periódica entre dispositivos.
-     O REST continua sendo a fonte compartilhada; o aparelho mantém o offline.
-     Não altera nem apaga dados. */
-  function run(){
+  /* V14: uma única rotina de sincronização automática.
+     Evita concorrência entre timers/hooks de versões anteriores. */
+  function run(reason){
     try{
       if(navigator.onLine && typeof window.syncMovimentUpV10==='function'){
-        window.syncMovimentUpV10();
+        window.syncMovimentUpV10(reason||'sincronização automática');
       }
     }catch(e){console.warn('Moviment Up auto-sync:',e)}
   }
-  /* Atualiza periodicamente mesmo sem recarregar a página. */
-  /* V13: consulta a fonte compartilhada em intervalos curtos, inclusive
-     quando a página permaneceu aberta por muito tempo. */
-  setInterval(run,10000);
-  /* Após qualquer salvamento de paciente, verifica o servidor sem exigir F5. */
-  setTimeout(function(){
-    try{
-      if(typeof window.savePatient==='function' && !window.__movimentUpAutoSaveV12){
-        const old=window.savePatient;
-        window.__movimentUpAutoSaveV12=true;
-        window.savePatient=function(){
-          const result=old.apply(this,arguments);
-          setTimeout(run,1200);
-  window.syncMovimentUpV13=run;
-          return result;
-        };
-      }
-    }catch(e){console.warn('Moviment Up save hook:',e)}
-  },100);
+  window.syncMovimentUpV14=()=>run('manual V14');
+  setInterval(()=>run('intervalo automático V14'),15000);
+  window.addEventListener('online',()=>setTimeout(()=>run('internet restaurada V14'),700));
+  document.addEventListener('visibilitychange',()=>{
+    if(!document.hidden && navigator.onLine)setTimeout(()=>run('retorno à plataforma V14'),700);
+  });
+  window.addEventListener('load',()=>setTimeout(()=>run('abertura da plataforma V14'),1200));
 })();
 </script>
 <script src="pwa-bridge.js"></script>
