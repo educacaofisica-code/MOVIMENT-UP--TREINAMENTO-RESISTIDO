@@ -4725,7 +4725,7 @@ setTimeout(render,200);setTimeout(render,800);
     });
     return {added,updated};
   }
-  function mergeRemotePatient(row){
+  function mergeRemotePatient(row, snapshot){
     const d=ensureDB(); if(!d||!row||row.id==null||!row.data)return false;
     const id=String(row.id), incoming=clone(row.data)||{};
     incoming.id=id;
@@ -4733,12 +4733,41 @@ setTimeout(render,200);setTimeout(render,800);
     if(row.updated_at)incoming.updatedAt=row.updated_at;
     const bundle=incoming.__movimentUpSyncBundle;
     delete incoming.__movimentUpSyncBundle;
-    const idx=d.patients.findIndex(x=>String(x.id)===id);
-    let changed=false;
+    let idx=d.patients.findIndex(x=>String(x.id)===id);
+    /* Se o mesmo paciente existe localmente com outro ID, reaproveita o
+       cadastro local somente quando ele foi alterado depois do último snapshot.
+       Caso contrário, o registro remoto passa a ser a versão canônica. */
     if(idx<0){
-      d.patients.push(incoming); changed=true;
+      const key=patientMatchKey(incoming);
+      if(key){
+        idx=d.patients.findIndex(x=>patientMatchKey(x)===key);
+        if(idx>=0){
+          const local=d.patients[idx];
+          const oldSig=(snapshot?.patients||{})[String(local.id)];
+          const localWasChanged=oldSig!==undefined && oldSig!==sig(local);
+          if(!localWasChanged){
+            const merged=mergePatientFields(incoming,local);
+            merged.id=id;
+            d.patients[idx]=merged;
+            if(bundle)mergeBundle(bundle);
+            return true;
+          }
+          return false;
+        }
+      }
+      d.patients.push(incoming);
       if(bundle)mergeBundle(bundle);
-    }else if(timeOf(incoming)>timeOf(d.patients[idx])){
+      return true;
+    }
+    const local=d.patients[idx];
+    const oldSig=(snapshot?.patients||{})[id];
+    const localWasChanged=oldSig!==undefined && oldSig!==sig(local);
+    let changed=false;
+    /* Regra principal: se este aparelho não alterou o cadastro desde o último
+       snapshot, o servidor pode trazer uma versão nova mesmo que o timestamp
+       local seja artificialmente mais recente. Isso corrige o caso em que o
+       tablet ficava preso aos seus dados locais antigos. */
+    if(!localWasChanged || timeOf(incoming)>timeOf(local)){
       d.patients[idx]=incoming; changed=true;
       if(bundle)mergeBundle(bundle);
     }else if(bundle){
@@ -4792,6 +4821,7 @@ setTimeout(render,200);setTimeout(render,800);
     setStatus('syncing','ONLINE • sincronizando com Supabase...');
     try{
       const firstSync=!hasSnapshot();
+      const snapshot=readSnapshot();
       let remotePatients=[];
       let remoteAssessments=[];
 
@@ -4803,7 +4833,7 @@ setTimeout(render,200);setTimeout(render,800);
          duplicatas quando os 108 registros compartilhados chegam do servidor. */
       const consolidated=consolidateLocalPatients(remotePatients);
       let remotePatientChanges=0;
-      for(const row of remotePatients){if(mergeRemotePatient(row))remotePatientChanges++}
+      for(const row of remotePatients){if(mergeRemotePatient(row,snapshot))remotePatientChanges++}
       /* Uma segunda consolidação captura casos em que o paciente remoto foi
          inserido após a primeira passada e garante uma única identidade local. */
       const consolidatedAfter=consolidateLocalPatients(remotePatients);
