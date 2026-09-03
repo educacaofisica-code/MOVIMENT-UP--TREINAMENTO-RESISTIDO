@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Casa de David — Moviment' Up</title>
+<title>Casa de David — Moviment' Up | Chrome</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0f4c5c">
 <meta name="mobile-web-app-capable" content="yes">
@@ -4975,5 +4975,200 @@ setTimeout(render,200);setTimeout(render,800);
 })();
 </script>
 <script src="pwa-bridge.js"></script>
+
+<script id="moviment-up-chrome-delete-sync-fix">
+(function(){
+  'use strict';
+
+  const DELETE_KEY = 'casa_david_moviment_up_deleted_v1';
+  const SYNC_SNAPSHOT_KEY = 'casa_david_moviment_up_sync_snapshot_v16';
+  const SB_URL = 'https://rliqdzgeooekkskchjhz.supabase.co';
+  const SB_KEY = 'sb_publishable_e_8kwsxtECNu3poH0-JaBg_9nr8U9y9';
+
+  function dbx(){ try{return (typeof db!=='undefined')?db:window.db}catch(e){return window.db||null} }
+  function clone(x){try{return JSON.parse(JSON.stringify(x))}catch(e){return x}}
+  function getDeleted(){
+    try{return JSON.parse(localStorage.getItem(DELETE_KEY)||'[]')}catch(e){return []}
+  }
+  function setDeleted(a){
+    try{localStorage.setItem(DELETE_KEY,JSON.stringify([...new Set(a.map(String))]))}catch(e){}
+  }
+  function addDeleted(pid){
+    const a=getDeleted(); a.push(String(pid)); setDeleted(a);
+  }
+  function headers(){
+    return {apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':'application/json'};
+  }
+  function localPersist(){
+    try{
+      if(typeof persist==='function') return persist();
+      const d=dbx(); if(!d)return false;
+      localStorage.setItem('casa_david_moviment_up_v1',JSON.stringify(d));
+      return true;
+    }catch(e){console.error(e);return false}
+  }
+  function refreshUI(){
+    try{if(typeof renderPatients==='function')renderPatients()}catch(e){}
+    try{if(typeof populateSelects==='function')populateSelects()}catch(e){}
+    try{if(typeof updateCounts==='function')updateCounts()}catch(e){}
+    try{if(typeof renderHistory==='function')renderHistory()}catch(e){}
+  }
+
+  async function remoteDeletePatient(pid){
+    const id=encodeURIComponent(String(pid));
+    const r=await fetch(SB_URL+'/rest/v1/patients?id=eq.'+id,{
+      method:'DELETE',
+      headers:Object.assign(headers(),{'Prefer':'return=minimal'}),
+      cache:'no-store',
+      credentials:'omit'
+    });
+    if(!r.ok) throw new Error('Exclusão no Supabase falhou: '+r.status+' '+await r.text().catch(()=>''));
+  }
+
+  async function remoteDeleteAssessment(id){
+    const r=await fetch(SB_URL+'/rest/v1/assessments?id=eq.'+encodeURIComponent(String(id)),{
+      method:'DELETE',headers:Object.assign(headers(),{'Prefer':'return=minimal'}),
+      cache:'no-store',credentials:'omit'
+    });
+    if(!r.ok) throw new Error('Exclusão da avaliação no Supabase falhou: '+r.status);
+  }
+
+  async function syncDeleted(){
+    if(!navigator.onLine)return;
+    const ids=getDeleted();
+    if(!ids.length)return;
+    const remaining=[];
+    for(const pid of ids){
+      try{
+        await remoteDeletePatient(pid);
+      }catch(e){
+        console.warn('Moviment Up: exclusão pendente',pid,e);
+        remaining.push(pid);
+      }
+    }
+    setDeleted(remaining);
+    try{
+      if(window.__movimentUpSetStatus && remaining.length===0)
+        window.__movimentUpSetStatus('online','ONLINE • sincronizado com Supabase');
+    }catch(e){}
+  }
+
+  /*
+   * Propaga exclusões feitas em outro dispositivo.
+   * Só considera como "removido remotamente" algo que existia no snapshot
+   * anterior deste dispositivo. Assim não transforma uma primeira sincronização
+   * incompleta em exclusões acidentais.
+   */
+  async function applyRemoteDeletions(remoteRows){
+    const d=dbx(); if(!d)return;
+    let snap={};
+    try{snap=JSON.parse(localStorage.getItem(SYNC_SNAPSHOT_KEY)||'{}')}catch(e){snap={}}
+    const known=Object.keys(snap.patients||{});
+    if(!known.length)return;
+
+    const remoteIds=new Set((remoteRows||[]).map(r=>String(r.id)));
+    const deleted = known.filter(id=>!remoteIds.has(id));
+    if(!deleted.length)return;
+
+    let changed=false;
+    for(const pid of deleted){
+      const beforeP=(d.patients||[]).length;
+      d.patients=(d.patients||[]).filter(p=>String(p.id)!==String(pid));
+      if(d.patients.length!==beforeP)changed=true;
+
+      ['assessments','training','trainingPlans','trainingProgressions',
+       'trainingSchedules','trainingAttendance','aerobicLogs',
+       'trainingCancellations'].forEach(k=>{
+        if(Array.isArray(d[k])){
+          const before=d[k].length;
+          d[k]=d[k].filter(x=>String(x.patientId)!==String(pid));
+          if(d[k].length!==before)changed=true;
+        }
+      });
+    }
+    if(changed){
+      localPersist();
+      refreshUI();
+    }
+  }
+
+  // Replace the existing complete-delete function with a safer version that
+  // preserves the current UI and also creates a sync tombstone.
+  window.__movimentUpDeleteFixReady = true;
+  window.deletePatient = async function(pid){
+    const d=dbx(); if(!d)return;
+    const p=(d.patients||[]).find(x=>String(x.id)===String(pid));
+    if(!p)return;
+
+    const keys=['assessments','training','trainingPlans','trainingProgressions',
+      'trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
+    const total=keys.reduce((n,k)=>n+(Array.isArray(d[k])?d[k].filter(x=>String(x.patientId)===String(pid)).length:0),0);
+
+    if(!confirm(
+      'APAGAR CADASTRO COMPLETO?\\n\\n'+
+      'Paciente: '+p.name+'\\n\\n'+
+      'Serão apagados o cadastro e os '+total+' registros vinculados, quando existirem.\\n\\n'+
+      'Esta ação não pode ser desfeita.\\n\\nDeseja continuar?'
+    )) return;
+
+    // Local deletion first: works offline and is immediate.
+    d.patients=(d.patients||[]).filter(x=>String(x.id)!==String(pid));
+    keys.forEach(k=>{
+      if(Array.isArray(d[k])) d[k]=d[k].filter(x=>String(x.patientId)!==String(pid));
+    });
+
+    addDeleted(pid);
+    if(typeof currentTrainingPatientId!=='undefined' && String(currentTrainingPatientId)===String(pid)){
+      currentTrainingPatientId=''; if(typeof currentTrainingPlan!=='undefined')currentTrainingPlan=null;
+    }
+    if(typeof currentPatientEditId!=='undefined' && String(currentPatientEditId)===String(pid))currentPatientEditId=null;
+
+    localPersist();
+    try{if(document.getElementById('tPatient'))document.getElementById('tPatient').value=''}catch(e){}
+    try{if(document.getElementById('sPatient'))document.getElementById('sPatient').value=''}catch(e){}
+    try{if(document.getElementById('aPatient'))document.getElementById('aPatient').value=''}catch(e){}
+    try{if(document.getElementById('hPatient'))document.getElementById('hPatient').value=''}catch(e){}
+    refreshUI();
+
+    if(navigator.onLine){
+      try{
+        await remoteDeletePatient(pid);
+        setDeleted(getDeleted().filter(x=>String(x)!==String(pid)));
+        try{window.__movimentUpSetStatus?.('online','ONLINE • exclusão sincronizada')}catch(e){}
+        alert('Cadastro de '+p.name+' apagado com sucesso e removido da sincronização.');
+      }catch(e){
+        console.warn(e);
+        try{window.__movimentUpSetStatus?.('syncing','ONLINE • exclusão aguardando sincronização')}catch(x){}
+        alert('Cadastro apagado deste dispositivo. A exclusão ficou pendente e será enviada ao Supabase automaticamente.');
+      }
+    }else{
+      try{window.__movimentUpSetStatus?.('offline','OFFLINE • exclusão salva neste dispositivo')}catch(e){}
+      alert('Cadastro de '+p.name+' apagado deste dispositivo. Quando a internet voltar, a exclusão será sincronizada.');
+    }
+  };
+
+  // Hook into the existing sync function without replacing its main logic.
+  const oldSync = window.syncMovimentUpV10;
+  if(typeof oldSync==='function' && !window.__movimentUpDeleteSyncHook){
+    window.__movimentUpDeleteSyncHook=true;
+    window.syncMovimentUpV10 = async function(reason){
+      try{
+        if(navigator.onLine && typeof fetch==='function'){
+          // First remove explicit local tombstones.
+          await syncDeleted();
+        }
+      }catch(e){console.warn('Moviment Up delete sync:',e)}
+      const result = await oldSync(reason||'sincronização');
+      return result;
+    };
+  }
+
+  window.addEventListener('online',()=>setTimeout(syncDeleted,1200));
+  window.addEventListener('load',()=>setTimeout(syncDeleted,1800));
+  setInterval(()=>{if(navigator.onLine)syncDeleted()},15000);
+
+})();
+</script>
+
 </body>
 </html>
