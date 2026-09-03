@@ -4930,6 +4930,50 @@ setTimeout(render,200);setTimeout(render,800);
   window.addEventListener('load',()=>setTimeout(()=>run('abertura da plataforma V14'),1200));
 })();
 </script>
+<script id="moviment-up-final-patient-push">
+(function(){
+  'use strict';
+  /* Última camada de segurança: depois que o cadastro foi salvo localmente,
+     envia o paciente final ao Supabase por UPSERT. Isso garante o caminho
+     computador -> Supabase -> tablet, sem apagar dados e sem depender do
+     próximo ciclo automático. */
+  const originalFinalSave=window.savePatient;
+  if(typeof originalFinalSave!=='function' || window.__movimentUpFinalPatientPush)return;
+  window.__movimentUpFinalPatientPush=true;
+  window.savePatient=async function(){
+    const localDB=(typeof getDB==='function'?getDB():(typeof db!=='undefined'?db:window.db));
+    const beforeIds=new Set((localDB?.patients||[]).map(p=>String(p.id)));
+    const result=originalFinalSave.apply(this,arguments);
+    try{
+      if(!navigator.onLine || typeof SUPABASE_URL==='undefined' || typeof SUPABASE_KEY==='undefined')return result;
+      const dbNow=(typeof getDB==='function'?getDB():(typeof db!=='undefined'?db:window.db));
+      const patients=dbNow?.patients||[];
+      const target=patients.find(p=>!beforeIds.has(String(p.id))) || patients.find(p=>String(p.id)===String(window.currentPatientEditId));
+      if(!target)return result;
+      const row={
+        id:String(target.id),
+        data:(typeof patientPayload==='function'?patientPayload(target):target),
+        created_at:target.createdAt||new Date().toISOString(),
+        updated_at:new Date().toISOString()
+      };
+      if(target.updatedAt!==undefined)target.updatedAt=row.updated_at;
+      const r=await fetch(SUPABASE_URL+'/rest/v1/patients?on_conflict=id',{
+        method:'POST',
+        headers:{
+          'apikey':SUPABASE_KEY,
+          'Authorization':'Bearer '+SUPABASE_KEY,
+          'Content-Type':'application/json',
+          'Prefer':'resolution=merge-duplicates,return=minimal'
+        },
+        body:JSON.stringify([row])
+      });
+      if(!r.ok)console.error('SUPABASE FINAL PUSH:',r.status,await r.text().catch(()=>''));
+      else console.log('SUPABASE FINAL PUSH: paciente enviado',target.name);
+    }catch(e){console.error('SUPABASE FINAL PUSH:',e)}
+    return result;
+  };
+})();
+</script>
 <script src="pwa-bridge.js"></script>
 </body>
 </html>
