@@ -5579,6 +5579,246 @@ setTimeout(render,200);setTimeout(render,800);
   @media print{.clean-report .card{box-shadow:none}.training-day{break-inside:avoid}.training-table tr{break-inside:avoid}}
 </style>
 
+
+<script id="moviment-up-history-training-enhancement">
+(function(){
+  'use strict';
+
+  function hEsc(v){
+    if(v===null||v===undefined)return '';
+    return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function hDate(v){
+    try{
+      if(typeof formatDate==='function') return formatDate(v);
+    }catch(e){}
+    return v||'—';
+  }
+  function hNum(v){
+    if(v===null||v===undefined||v==='') return '';
+    return v;
+  }
+  function hPatient(pid){
+    return (db.patients||[]).find(p=>String(p.id)===String(pid))||null;
+  }
+  function hPlan(pid){
+    return (db.trainingPlans||[]).find(p=>String(p.patientId)===String(pid))||null;
+  }
+  function hLogs(pid){
+    return (db.training||[])
+      .filter(x=>String(x.patientId)===String(pid)&&(x.kind==='daily'||x.kind==null))
+      .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  }
+  function hExercises(plan){
+    const out=[];
+    ['A','B','C','D','E'].forEach(day=>{
+      (plan?.strength?.[day]||[]).forEach(ex=>out.push({day,ex}));
+    });
+    return out;
+  }
+  function hOpenTraining(pid){
+    const sel=document.getElementById('tPatient');
+    if(sel){sel.value=pid; if(typeof loadTrainingPatient==='function')loadTrainingPatient();}
+    if(typeof show==='function')show('training');
+    setTimeout(()=>{try{if(typeof renderTraining==='function')renderTraining()}catch(e){}},80);
+  }
+
+  window.editHistoryTrainingLog=function(id){
+    const log=(db.training||[]).find(x=>String(x.id)===String(id));
+    if(!log)return;
+    const wrap=document.getElementById('historyTrainingEdit');
+    if(!wrap)return;
+    wrap.innerHTML=`<div class="card history-edit-card">
+      <h3>Editar treino realizado</h3>
+      <div class="grid history-edit-grid">
+        <label>Data<input id="he_date" type="date" value="${hEsc(log.date||'')}"></label>
+        <label>Treino<input id="he_workout" value="${hEsc(log.workout||'')}"></label>
+        <label>Modalidade<input id="he_modality" value="${hEsc(log.modality||'')}"></label>
+        <label>Exercício<input id="he_exercise" value="${hEsc(log.exercise||'')}"></label>
+        <label>Carga prescrita<input id="he_loadPrescribed" type="number" step="any" value="${hNum(log.loadPrescribed)}"></label>
+        <label>Carga realizada<input id="he_loadPerformed" type="number" step="any" value="${hNum(log.loadPerformed)}"></label>
+        <label>Séries prescritas<input id="he_setsPrescribed" type="number" step="any" value="${hNum(log.setsPrescribed)}"></label>
+        <label>Séries realizadas<input id="he_setsPerformed" type="number" step="any" value="${hNum(log.setsPerformed)}"></label>
+        <label>Repetições prescritas<input id="he_repsPrescribed" type="number" step="any" value="${hNum(log.repsPrescribed)}"></label>
+        <label>Repetições realizadas<input id="he_repsPerformed" type="number" step="any" value="${hNum(log.repsPerformed)}"></label>
+        <label>Tempo (min)<input id="he_duration" type="number" step="any" value="${hNum(log.duration)}"></label>
+        <label>Distância (km)<input id="he_distance" type="number" step="any" value="${hNum(log.distance)}"></label>
+        <label>Velocidade (km/h)<input id="he_speed" type="number" step="any" value="${hNum(log.speed)}"></label>
+        <label>PACE<input id="he_pace" value="${hEsc(log.pace||'')}"></label>
+        <label>FC inicial<input id="he_fcInitial" type="number" step="any" value="${hNum(log.fcInitial)}"></label>
+        <label>FC média<input id="he_fcAvg" type="number" step="any" value="${hNum(log.fcAvg)}"></label>
+        <label>FC final<input id="he_fcFinal" type="number" step="any" value="${hNum(log.fcFinal)}"></label>
+        <label>FC-alvo<input id="he_fcTarget" value="${hEsc(log.fcTarget||'')}"></label>
+        <label>RPE (0–10)<input id="he_rpe" type="number" min="0" max="10" step="any" value="${hNum(log.rpe)}"></label>
+        <label>Regulação<input id="he_regulation" value="${hEsc(log.regulation||'')}"></label>
+      </div>
+      <label>Observações<textarea id="he_obs">${hEsc(log.obs||'')}</textarea></label>
+      <div class="actions">
+        <button class="btn" onclick="saveHistoryTrainingLog('${hEsc(log.id)}')">💾 Salvar alteração</button>
+        <button class="btn secondary" onclick="cancelHistoryTrainingEdit()">Cancelar</button>
+      </div>
+    </div>`;
+    wrap.scrollIntoView({behavior:'smooth',block:'center'});
+  };
+
+  window.cancelHistoryTrainingEdit=function(){
+    const wrap=document.getElementById('historyTrainingEdit');
+    if(wrap)wrap.innerHTML='';
+  };
+
+  window.saveHistoryTrainingLog=function(id){
+    const log=(db.training||[]).find(x=>String(x.id)===String(id));
+    if(!log)return;
+    const val=id=>document.getElementById(id)?.value??'';
+    const n=id=>{const v=val(id);return v===''?null:Number(v)};
+    log.date=val('he_date')||log.date;
+    log.workout=val('he_workout');
+    log.modality=val('he_modality');
+    log.exercise=val('he_exercise');
+    log.loadPrescribed=n('he_loadPrescribed');
+    log.loadPerformed=n('he_loadPerformed');
+    log.setsPrescribed=n('he_setsPrescribed');
+    log.setsPerformed=n('he_setsPerformed');
+    log.repsPrescribed=n('he_repsPrescribed');
+    log.repsPerformed=n('he_repsPerformed');
+    log.duration=n('he_duration');
+    log.distance=n('he_distance');
+    log.speed=n('he_speed');
+    log.pace=val('he_pace');
+    log.fcInitial=n('he_fcInitial');
+    log.fcAvg=n('he_fcAvg');
+    log.fcFinal=n('he_fcFinal');
+    log.fcTarget=val('he_fcTarget');
+    log.rpe=n('he_rpe');
+    log.regulation=val('he_regulation');
+    log.obs=val('he_obs');
+    log.updatedAt=new Date().toISOString();
+    try{persist();}catch(e){console.error(e);}
+    cancelHistoryTrainingEdit();
+    renderHistory();
+    alert('Treino realizado atualizado com sucesso.');
+  };
+
+  function historyTrainingBlock(pid){
+    const plan=hPlan(pid), logs=hLogs(pid), pg=(db.trainingProgressions||[]).filter(x=>String(x.patientId)===String(pid)).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+    let html=`<div class="card history-tools">
+      <div class="section-head"><h3>Treinamento — Histórico e Prescrição</h3>
+        <div class="actions">
+          <button class="btn" onclick="generatePatientPDF && generatePatientPDF('${hEsc(pid)}')">📄 Gerar PDF</button>
+          <button class="btn secondary" onclick="printHistoryTraining('${hEsc(pid)}')">🖨️ Imprimir</button>
+          ${plan?`<button class="btn" onclick="openHistoryPrescriptionEdit('${hEsc(pid)}')">✏️ Editar prescrição</button>`:''}
+        </div>
+      </div>`;
+
+    if(plan){
+      html+=`<div class="notice"><b>Prescrição atual:</b> ${hDate(plan.date)} &nbsp;|&nbsp; <b>Professor:</b> ${hEsc(plan.professor||'—')}</div>`;
+      if(Array.isArray(plan.objectives)&&plan.objectives.length) html+=`<p><b>Objetivos:</b> ${hEsc(plan.objectives.join(', '))}</p>`;
+      ['A','B','C','D','E'].forEach(day=>{
+        const exs=plan.strength?.[day]||[];
+        if(!exs.length)return;
+        html+=`<h4>Treino ${day}</h4><table class="history-training-table"><tr><th>Exercício</th><th>Carga</th><th>Séries</th><th>Repetições</th><th>Intervalo</th><th>Observações</th></tr>`;
+        exs.forEach(ex=>{
+          html+=`<tr><td>${hEsc(ex.name||'—')}</td><td>${hNum(ex.load)||'—'}</td><td>${hNum(ex.sets)||'—'}</td><td>${hNum(ex.reps)||'—'}</td><td>${hNum(ex.interval)||'—'}</td><td>${hEsc(ex.obs||'—')}</td></tr>`;
+        });
+        html+='</table>';
+      });
+      const a=plan.aerobic||{};
+      const aerobicRows=[
+        ['Modalidade',a.modality],['Frequência',a.frequency],['Duração',a.duration],['Intensidade',a.intensity],
+        ['Objetivo',a.objective],['FC-alvo',a.fcTarget],['FC máxima',a.fcMax],['FC repouso',a.fcRest],
+        ['FC de reserva',a.fcReserve],['Velocidade',a.speed],['Distância',a.distance],['Resistência',a.resistance],['Nível',a.level],['Observações',a.obs]
+      ].filter(r=>r[1]!==null&&r[1]!==undefined&&r[1]!=='');
+      if(aerobicRows.length){
+        html+=`<h4>Treinamento aeróbico — prescrição atual</h4><table>${aerobicRows.map(r=>`<tr><th>${hEsc(r[0])}</th><td>${hEsc(r[1])}</td></tr>`).join('')}</table>`;
+      }
+    }else{
+      html+=`<p class="muted">Nenhuma prescrição atual registrada para este paciente.</p>`;
+    }
+
+    html+=`<div id="historyTrainingEdit"></div><hr><h3>Treinos realizados</h3>`;
+    if(!logs.length){
+      html+=`<p class="muted">Nenhum treino diário registrado para este paciente.</p>`;
+    }else{
+      html+=`<table class="history-training-table"><tr><th>Data</th><th>Treino</th><th>Exercício/Modalidade</th><th>Carga</th><th>Séries</th><th>Reps.</th><th>Tempo</th><th>Distância</th><th>PACE</th><th>FC média</th><th>RPE</th><th>Ações</th></tr>`;
+      logs.forEach(l=>{
+        html+=`<tr><td>${hDate(l.date)}</td><td>${hEsc(l.workout||'—')}</td><td>${hEsc(l.exercise||l.modality||'—')}</td><td>${hNum(l.loadPerformed)||'—'}</td><td>${hNum(l.setsPerformed)||'—'}</td><td>${hNum(l.repsPerformed)||'—'}</td><td>${hNum(l.duration)||'—'}</td><td>${hNum(l.distance)||'—'}</td><td>${hEsc(l.pace||'—')}</td><td>${hNum(l.fcAvg)||'—'}</td><td>${hNum(l.rpe)||'—'}</td><td><button class="btn small" onclick="editHistoryTrainingLog('${hEsc(l.id)}')">✏️ Editar</button></td></tr>`;
+      });
+      html+='</table>';
+    }
+
+    if(pg.length){
+      html+=`<h3>Histórico de alterações da prescrição</h3><table><tr><th>Data</th><th>Exercício/Registro</th><th>Tipo</th><th>Professor</th><th>Observação</th></tr>`;
+      pg.forEach(x=>html+=`<tr><td>${hDate(x.date)}</td><td>${hEsc(x.exerciseName||'Plano completo')}</td><td>${hEsc(x.type||'—')}</td><td>${hEsc(x.professor||'—')}</td><td>${hEsc(x.observation||'—')}</td></tr>`);
+      html+='</table>';
+    }
+    html+='</div>';
+    return html;
+  }
+
+  window.openHistoryPrescriptionEdit=function(pid){
+    hOpenTraining(pid);
+  };
+
+  window.printHistoryTraining=function(pid){
+    const p=hPatient(pid);
+    const plan=hPlan(pid);
+    const logs=hLogs(pid);
+    const title=`Histórico de treinamento — ${p?.name||'Paciente'}`;
+    let body=`<h1>${hEsc(title)}</h1><p><b>Paciente:</b> ${hEsc(p?.name||'—')}</p>`;
+    if(plan){
+      body+=`<h2>Prescrição atual — ${hDate(plan.date)}</h2><p><b>Professor:</b> ${hEsc(plan.professor||'—')}</p>`;
+      ['A','B','C','D','E'].forEach(day=>{
+        const exs=plan.strength?.[day]||[]; if(!exs.length)return;
+        body+=`<h3>Treino ${day}</h3><table><tr><th>Exercício</th><th>Carga</th><th>Séries</th><th>Reps.</th><th>Intervalo</th><th>Observações</th></tr>`;
+        exs.forEach(ex=>body+=`<tr><td>${hEsc(ex.name||'—')}</td><td>${hNum(ex.load)||'—'}</td><td>${hNum(ex.sets)||'—'}</td><td>${hNum(ex.reps)||'—'}</td><td>${hNum(ex.interval)||'—'}</td><td>${hEsc(ex.obs||'—')}</td></tr>`);
+        body+='</table>';
+      });
+    }
+    body+='<h2>Treinos realizados</h2>';
+    if(logs.length){
+      body+='<table><tr><th>Data</th><th>Treino</th><th>Exercício/Modalidade</th><th>Carga</th><th>Séries</th><th>Reps.</th><th>Tempo</th><th>Distância</th><th>PACE</th><th>FC média</th><th>RPE</th></tr>';
+      logs.forEach(l=>body+=`<tr><td>${hDate(l.date)}</td><td>${hEsc(l.workout||'—')}</td><td>${hEsc(l.exercise||l.modality||'—')}</td><td>${hNum(l.loadPerformed)||'—'}</td><td>${hNum(l.setsPerformed)||'—'}</td><td>${hNum(l.repsPerformed)||'—'}</td><td>${hNum(l.duration)||'—'}</td><td>${hNum(l.distance)||'—'}</td><td>${hEsc(l.pace||'—')}</td><td>${hNum(l.fcAvg)||'—'}</td><td>${hNum(l.rpe)||'—'}</td></tr>`);
+      body+='</table>';
+    }else body+='<p>Nenhum treino realizado registrado.</p>';
+    const w=window.open('','_blank','width=1100,height=800');
+    if(!w){alert('Permita pop-ups para imprimir o histórico.');return;}
+    w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${hEsc(title)}</title><style>body{font-family:Arial,sans-serif;color:#17252b;padding:24px}h1{font-size:22px;color:#0f4c5c}h2{font-size:17px;color:#0753aa;margin-top:22px}h3{font-size:14px;color:#0753aa}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{border:1px solid #ddd;padding:6px;text-align:left;font-size:11px}th{background:#f2f5f4}tr{break-inside:avoid}@media print{body{padding:10px}}</style></head><body>${body}<script>window.onload=function(){setTimeout(function(){window.print()},250)}<\/script></body></html>`);
+    w.document.close();
+  };
+
+  const originalHistory=window.renderHistory;
+  window.renderHistory=function(){
+    if(typeof originalHistory==='function') originalHistory();
+    setTimeout(()=>{
+      const pid=document.getElementById('hPatient')?.value;
+      const host=document.getElementById('historyContent');
+      if(!host||!pid)return;
+      const old=host.querySelector('.history-training-enhancement-host');
+      if(old)old.remove();
+      const holder=document.createElement('div');
+      holder.className='history-training-enhancement-host';
+      holder.innerHTML=historyTrainingBlock(pid);
+      host.appendChild(holder);
+    },0);
+  };
+
+})();
+</script>
+<style id="moviment-up-history-training-style">
+.history-tools{margin-top:14px}
+.history-tools .section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.history-training-table{font-size:11px;width:100%;border-collapse:collapse}
+.history-training-table th,.history-training-table td{padding:6px;border:1px solid #d8dee2;vertical-align:top;text-align:left}
+.history-training-table th{background:#f2f5f4}
+.history-edit-card{border:1px solid #d8dee2;background:#fff;margin-top:10px}
+.history-edit-grid{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.history-edit-card textarea{min-height:70px}
+.btn.small{padding:5px 8px;font-size:11px}
+@media print{
+  .history-tools .actions,.history-edit-card{display:none!important}
+}
+</style>
+
 <script src="pwa-bridge.js"></script>
 </body>
 </html>
