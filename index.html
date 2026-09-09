@@ -5704,7 +5704,7 @@ setTimeout(render,200);setTimeout(render,800);
     let html=`<div class="card history-tools">
       <div class="section-head"><h3>Treinamento — Histórico e Prescrição</h3>
         <div class="actions">
-          <button class="btn" onclick="generatePatientPDF && generatePatientPDF('${hEsc(pid)}')">📄 Gerar PDF</button>
+          <button class="btn" onclick="generateTrainingHistoryPDF('${hEsc(pid)}')">📄 Gerar PDF do histórico</button>
           <button class="btn secondary" onclick="printHistoryTraining('${hEsc(pid)}')">🖨️ Imprimir</button>
           ${plan?`<button class="btn" onclick="openHistoryPrescriptionEdit('${hEsc(pid)}')">✏️ Editar prescrição</button>`:''}
         </div>
@@ -5759,31 +5759,50 @@ setTimeout(render,200);setTimeout(render,800);
     hOpenTraining(pid);
   };
 
-  window.printHistoryTraining=function(pid){
-    const p=hPatient(pid);
-    const plan=hPlan(pid);
-    const logs=hLogs(pid);
-    const title=`Histórico de treinamento — ${p?.name||'Paciente'}`;
-    let body=`<h1>${hEsc(title)}</h1><p><b>Paciente:</b> ${hEsc(p?.name||'—')}</p>`;
-    if(plan){
-      body+=`<h2>Prescrição atual — ${hDate(plan.date)}</h2><p><b>Professor:</b> ${hEsc(plan.professor||'—')}</p>`;
-      ['A','B','C','D','E'].forEach(day=>{
-        const exs=plan.strength?.[day]||[]; if(!exs.length)return;
-        body+=`<h3>Treino ${day}</h3><table><tr><th>Exercício</th><th>Carga</th><th>Séries</th><th>Reps.</th><th>Intervalo</th><th>Observações</th></tr>`;
-        exs.forEach(ex=>body+=`<tr><td>${hEsc(ex.name||'—')}</td><td>${hNum(ex.load)||'—'}</td><td>${hNum(ex.sets)||'—'}</td><td>${hNum(ex.reps)||'—'}</td><td>${hNum(ex.interval)||'—'}</td><td>${hEsc(ex.obs||'—')}</td></tr>`);
-        body+='</table>';
-      });
+  function trainingHistoryKind(l){
+    const text=String((l?.workout||'')+' '+(l?.modality||'')+' '+(l?.exercise||'')).toLowerCase();
+    const aerobicWords=['esteira','caminhada','corrida','corrida','bicicleta','bike','elíptico','eliptico','ergométrico','ergometrico','aeróbico','aerobico','cardio','natação','natacao','hidroginástica','hidroginastica'];
+    const hasStrength = l && (l.loadPerformed!=null || l.setsPerformed!=null || l.repsPerformed!=null || l.loadPrescribed!=null || l.setsPrescribed!=null || l.repsPrescribed!=null);
+    if(hasStrength && !aerobicWords.some(w=>text.includes(w))) return 'strength';
+    if(aerobicWords.some(w=>text.includes(w)) || l?.distance!=null || l?.speed!=null || l?.pace || l?.duration!=null || l?.fcAvg!=null) return 'aerobic';
+    return hasStrength?'strength':'other';
+  }
+
+  function historyLogRows(logs,kind){
+    const arr=logs.filter(l=>trainingHistoryKind(l)===kind);
+    if(!arr.length) return '<p class="muted">Nenhum registro encontrado.</p>';
+    if(kind==='strength'){
+      let h='<table><tr><th>Data</th><th>Treino</th><th>Exercício</th><th>Carga</th><th>Séries</th><th>Repetições</th><th>RPE</th><th>Observações</th></tr>';
+      arr.forEach(l=>h+=`<tr><td>${hDate(l.date)}</td><td>${hEsc(l.workout||'—')}</td><td>${hEsc(l.exercise||'—')}</td><td>${hNum(l.loadPerformed??l.loadPrescribed)||'—'}</td><td>${hNum(l.setsPerformed??l.setsPrescribed)||'—'}</td><td>${hNum(l.repsPerformed??l.repsPrescribed)||'—'}</td><td>${hNum(l.rpe)||'—'}</td><td>${hEsc(l.obs||'—')}</td></tr>`);
+      return h+'</table>';
     }
-    body+='<h2>Treinos realizados</h2>';
-    if(logs.length){
-      body+='<table><tr><th>Data</th><th>Treino</th><th>Exercício/Modalidade</th><th>Carga</th><th>Séries</th><th>Reps.</th><th>Tempo</th><th>Distância</th><th>PACE</th><th>FC média</th><th>RPE</th></tr>';
-      logs.forEach(l=>body+=`<tr><td>${hDate(l.date)}</td><td>${hEsc(l.workout||'—')}</td><td>${hEsc(l.exercise||l.modality||'—')}</td><td>${hNum(l.loadPerformed)||'—'}</td><td>${hNum(l.setsPerformed)||'—'}</td><td>${hNum(l.repsPerformed)||'—'}</td><td>${hNum(l.duration)||'—'}</td><td>${hNum(l.distance)||'—'}</td><td>${hEsc(l.pace||'—')}</td><td>${hNum(l.fcAvg)||'—'}</td><td>${hNum(l.rpe)||'—'}</td></tr>`);
-      body+='</table>';
-    }else body+='<p>Nenhum treino realizado registrado.</p>';
+    let h='<table><tr><th>Data</th><th>Treino</th><th>Modalidade</th><th>Tempo</th><th>Distância</th><th>Velocidade</th><th>PACE</th><th>FC média</th><th>RPE</th><th>Observações</th></tr>';
+    arr.forEach(l=>h+=`<tr><td>${hDate(l.date)}</td><td>${hEsc(l.workout||'—')}</td><td>${hEsc(l.modality||l.exercise||'—')}</td><td>${hNum(l.duration)||'—'}</td><td>${hNum(l.distance)||'—'}</td><td>${hNum(l.speed)||'—'}</td><td>${hEsc(l.pace||'—')}</td><td>${hNum(l.fcAvg)||'—'}</td><td>${hNum(l.rpe)||'—'}</td><td>${hEsc(l.obs||'—')}</td></tr>`);
+    return h+'</table>';
+  }
+
+  window.generateTrainingHistoryPDF=function(pid){
+    const p=hPatient(pid), logs=hLogs(pid);
+    const title=`Histórico de Treinos — ${p?.name||'Paciente'}`;
+    const strength=logs.filter(l=>trainingHistoryKind(l)==='strength');
+    const aerobic=logs.filter(l=>trainingHistoryKind(l)==='aerobic');
+    const other=logs.filter(l=>trainingHistoryKind(l)==='other');
+    let body=`<div class="brand"><img src="${logo}" alt="Casa de David"><div><h1>Histórico de Treinos</h1><div class="subtitle">Moviment' Up — Treinamento Resistido Inclusivo</div></div></div>
+      <div class="patient"><b>Paciente:</b> ${hEsc(p?.name||'—')}</div>`;
+    body+=`<h2>Treinos de musculação</h2>${historyLogRows(logs,'strength')}`;
+    body+=`<h2>Treinos aeróbicos</h2>${historyLogRows(logs,'aerobic')}`;
+    if(other.length) body+=`<h2>Outros registros de treinamento</h2>${historyLogRows(logs,'other')}`;
+    if(!logs.length) body+='<p>Nenhum treino realizado registrado para este paciente.</p>';
     const w=window.open('','_blank','width=1100,height=800');
-    if(!w){alert('Permita pop-ups para imprimir o histórico.');return;}
-    w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${hEsc(title)}</title><style>body{font-family:Arial,sans-serif;color:#17252b;padding:24px}h1{font-size:22px;color:#0f4c5c}h2{font-size:17px;color:#0753aa;margin-top:22px}h3{font-size:14px;color:#0753aa}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{border:1px solid #ddd;padding:6px;text-align:left;font-size:11px}th{background:#f2f5f4}tr{break-inside:avoid}@media print{body{padding:10px}}</style></head><body>${body}<script>window.onload=function(){setTimeout(function(){window.print()},250)}<\/script></body></html>`);
+    if(!w){alert('Permita pop-ups para gerar o PDF do histórico.');return;}
+    w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${hEsc(title)}</title><style>
+      *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#17252b;padding:24px;font-size:12px}.brand{display:flex;align-items:center;gap:16px;border-bottom:2px solid #0f4c5c;padding-bottom:10px;margin-bottom:12px}.brand img{width:105px;height:auto;object-fit:contain}.brand h1{margin:0;color:#0f4c5c;font-size:21px}.subtitle{color:#0753aa;font-weight:700;margin-top:3px}.patient{border:1px solid #d8dee2;background:#f7f9fa;border-radius:6px;padding:8px;margin-bottom:14px}h2{color:#0753aa;font-size:15px;border-bottom:1px solid #d8dee2;padding-bottom:5px;margin:18px 0 8px}table{width:100%;border-collapse:collapse;margin:6px 0 14px;table-layout:auto}th,td{border:1px solid #d8dee2;padding:5px 6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{background:#f2f5f7;font-size:10.5px}td{font-size:10.5px}tr{break-inside:avoid}.muted{color:#66777e}.footer{margin-top:18px;border-top:1px solid #d8dee2;padding-top:7px;color:#66777e;font-size:9px}@media print{body{padding:10px}.brand{break-inside:avoid}h2{break-after:avoid}table{break-inside:auto}}
+      </style></head><body>${body}<div class="footer">Relatório gerado a partir do histórico de treinos registrados na plataforma Moviment' Up.</div><script>window.onload=function(){setTimeout(function(){window.print()},300)}<\/script></body></html>`);
     w.document.close();
+  };
+
+  window.printHistoryTraining=function(pid){
+    window.generateTrainingHistoryPDF(pid);
   };
 
   const originalHistory=window.renderHistory;
