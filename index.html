@@ -5163,69 +5163,260 @@ setTimeout(render,200);setTimeout(render,800);
   function buildCompleteReport(pid){
     const p=A(db.patients).find(x=>x&&String(x.id)===String(pid));
     if(!p)return null;
-    const as=patientAssessments(pid), ch=patientChildren(pid);
-    const plan=typeof getTrainingPlan==='function'?getTrainingPlan(pid):ch.trainingPlans[0]||null;
-    return {p,as,ch,plan};
+    const plan=typeof getTrainingPlan==='function'?getTrainingPlan(pid):A(db.trainingPlans).find(x=>x&&String(x.patientId)===String(pid))||null;
+    return {p,plan};
   }
 
-  function reportHTML(m){
-    const p=m.p;
-    const diagnoses=A(p.diagnoses);
-    const records=A(p.diagnosisRecords);
-    let html='<div class="complete-report">';
-    html+='<div class="card report-ident"><h2>CASA DE DAVID</h2><h3>Moviment’ Up — Treinamento Resistido Inclusivo</h3><p><b>RELATÓRIO COMPLETO DO PACIENTE</b></p>';
-    html+='<div class="report-meta"><p><b>Paciente:</b> '+escF(p.name)+'</p><p><b>Data de nascimento:</b> '+dateF(p.birth)+'</p><p><b>Idade:</b> '+escF(p.age!=null?p.age:(typeof calcAgeFromBirth==='function'?calcAgeFromBirth(p.birth):'—'))+'</p><p><b>Sexo:</b> '+escF(p.sex||'—')+'</p><p><b>Unidade:</b> '+escF(p.unit||'—')+'</p><p><b>Nível de apoio:</b> '+escF(p.supportLevel||'—')+'</p>';
-    html+='<p><b>Diagnóstico principal/legado:</b> '+escF(p.diagnosis||'—')+'</p>';
-    html+='<p><b>Todos os diagnósticos:</b> '+escF(diagnoses.length?diagnoses.join(', '):'—')+'</p>';
-    html+='<p><b>Registros de diagnóstico:</b> '+escF(records.length?records.map(x=>typeof x==='object'?text(x):x).join(' | '):'—')+'</p>';
-    html+='<p><b>Deficiência/condição:</b> '+escF(text(p.deficiency))+'</p><p><b>Condições funcionais:</b> '+escF(text(p.functionalConditions))+'</p><p><b>Detalhamento:</b> '+escF(p.diagnosisDetail||'—')+'</p><p><b>Outro diagnóstico:</b> '+escF(p.otherDiagnosis||'—')+'</p><p><b>Observações:</b> '+escF(p.observations||'—')+'</p></div></div>';
-
-    html+=sectionFromObject('TODOS OS DADOS CADASTRADOS DO PACIENTE',p);
-
-    if(m.as.length){
-      html+='<div class="card all-data-card"><h3>AVALIAÇÕES FÍSICAS E FUNCIONAIS — TODAS AS AVALIAÇÕES</h3>';
-      m.as.forEach((a,i)=>{html+='<div class="assessment-block"><h4>Avaliação '+(i+1)+' — '+dateF(a.date)+'</h4>'+sectionFromObject('Dados completos da avaliação',a)+'</div>'});
-      html+='</div>';
-    }else html+='<div class="card"><h3>AVALIAÇÕES</h3><p class="muted">Nenhuma avaliação cadastrada.</p></div>';
-
-    if(m.plan)html+=sectionFromObject('PRESCRIÇÃO ATUAL DE TREINAMENTO',m.plan);
-    if(m.ch.training.length)html+=sectionFromObject('REGISTROS DE TREINAMENTO REALIZADO',{'Registros':m.ch.training});
-    if(m.ch.aerobicLogs.length)html+=sectionFromObject('REGISTROS AERÓBICOS',{'Registros':m.ch.aerobicLogs});
-    if(m.ch.trainingProgressions.length)html+=sectionFromObject('HISTÓRICO DE PROGRESSÕES',{'Registros':m.ch.trainingProgressions});
-    if(m.ch.trainingSchedules.length)html+=sectionFromObject('CRONOGRAMAS DE TREINAMENTO',{'Registros':m.ch.trainingSchedules});
-    if(m.ch.trainingAttendance.length)html+=sectionFromObject('FREQUÊNCIA / PARTICIPAÇÕES',{'Registros':m.ch.trainingAttendance});
-    if(m.ch.trainingCancellations.length)html+=sectionFromObject('CANCELAMENTOS REGISTRADOS',{'Registros':m.ch.trainingCancellations});
-
-    html+='<div class="card"><h3>CONTROLE DO RELATÓRIO</h3><p><b>Data de emissão:</b> '+new Date().toLocaleDateString('pt-BR')+'</p><p>Este relatório apresenta os dados atualmente cadastrados para o paciente na plataforma Moviment’ Up, incluindo registros clínicos, avaliações e treinamento disponíveis no dispositivo.</p></div>';
-    html+='</div>';
+  // Relatório institucional enxuto: somente cadastro, diagnósticos e prescrição atual.
+  // IDs técnicos, avaliações, histórico, snapshots, registros realizados e comparações não são impressos.
+  function cleanText(v){
+    if(v===null||v===undefined)return '';
+    if(typeof v==='string')return v.trim();
+    return String(v).trim();
+  }
+  function uniqueTexts(list){
+    const out=[],seen=new Set();
+    (list||[]).forEach(v=>{const t=cleanText(v);if(!t)return;const k=t.toLowerCase();if(seen.has(k))return;seen.add(k);out.push(t);});
+    return out;
+  }
+  // ============================================================
+  // RELATÓRIO / PDF — versão institucional objetiva com avaliação e comparação
+  // ============================================================
+  function reportInternalId(p){
+    for(const v of [p?.internalId,p?.registroInterno,p?.registration,p?.registro,p?.matricula]){
+      const t=cleanText(v); if(t) return t;
+    }
+    return '';
+  }
+  function reportDiagnoses(p){
+    const out=[], seen=new Set();
+    const add=(name,classification)=>{
+      name=cleanText(name); if(!name) return;
+      const cls=cleanText(classification);
+      const key=(name+'|'+cls).toLowerCase();
+      if(seen.has(key)) return; seen.add(key);
+      out.push({name,classification:cls});
+    };
+    // Diagnóstico principal do cadastro
+    add(p?.diagnosis,p?.diagnosisDetail);
+    // Diagnósticos/condições preenchidos no cadastro
+    if(Array.isArray(p?.diagnosisRecords)) p.diagnosisRecords.forEach(r=>{
+      if(r&&typeof r==='object') add(r.name||r.diagnosis||r.nome,r.classification||r.classificacao);
+      else add(r,'');
+    });
+    if(Array.isArray(p?.diagnoses)) p.diagnoses.forEach(r=>{
+      if(r&&typeof r==='object') add(r.name||r.diagnosis||r.nome,r.classification||r.classificacao);
+      else add(r,'');
+    });
+    add(p?.otherDiagnosis,'');
+    // Algumas versões armazenam a seleção nova em registros clínicos.
+    try{
+      const c=typeof normalizePatientClinical==='function'?normalizePatientClinical(p):null;
+      if(c?.diagnoses) c.diagnoses.forEach(r=>add(r.name,r.classification));
+    }catch(e){}
+    return out;
+  }
+  function reportAssessmentList(pid){
+    return A(db.assessments).filter(a=>a&&String(a.patientId)===String(pid))
+      .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+  }
+  function reportValue(v, suffix=''){
+    if(v===null||v===undefined||v==='') return '—';
+    return cleanText(v)+suffix;
+  }
+  function reportNum(v){
+    return (v===null||v===undefined||v==='')?null:Number(v);
+  }
+  function reportStatus(metric,oldV,newV){
+    const o=reportNum(oldV), n=reportNum(newV);
+    if(o===null||n===null||!Number.isFinite(o)||!Number.isFinite(n)) return '—';
+    const eps=Math.max(Math.abs(o)*0.02,0.01);
+    if(Math.abs(n-o)<=eps) return 'Estabilidade';
+    if(metric==='tug') return n<o ? 'Progressão' : 'Regressão';
+    if(metric==='sitStand'||metric==='grip'||metric==='wells'||metric==='vo2') return n>o ? 'Progressão' : 'Regressão';
+    if(metric==='waist'||metric==='whr') return n<o ? 'Progressão' : 'Regressão';
+    if(metric==='bmi'){
+      // Para IMC, a direção depende da faixa de partida, mantendo a lógica já usada na plataforma.
+      try{
+        const st=bmiStatus(o,n); return st?.[0]==='Evoluiu'?'Progressão':st?.[0]==='Regrediu'?'Regressão':'Estabilidade';
+      }catch(e){ return n<o ? 'Progressão' : 'Regressão'; }
+    }
+    return '—';
+  }
+  function reportDiff(oldV,newV){
+    const o=reportNum(oldV),n=reportNum(newV);
+    if(o===null||n===null||!Number.isFinite(o)||!Number.isFinite(n)) return '—';
+    const d=n-o;
+    const pct=o!==0?(d/o)*100:null;
+    return `${d>0?'+':''}${d.toFixed(2)}${pct!==null?' ('+(pct>0?'+':'')+pct.toFixed(1)+'%)':''}`;
+  }
+  function reportTableRows(rows){
+    return rows.filter(r=>r && cleanText(r[1])!=='').map(r=>`<tr><th>${escF(r[0])}</th><td>${escF(reportValue(r[1],r[2]||''))}</td></tr>`).join('');
+  }
+  function reportComparisonRows(prev,last){
+    const pa=prev?.anthropometry||{}, la=last?.anthropometry||{};
+    const pt=prev?.tests||{}, lt=last?.tests||{};
+    const pc=prev?.cardio||{}, lc=last?.cardio||{};
+    const rows=[
+      ['Peso (kg)',pa.weight,la.weight,'bmi'],
+      ['Altura (m)',pa.height,la.height,''],
+      ['IMC',pa.bmi,la.bmi,'bmi'],
+      ['Cintura (cm)',pa.waist,la.waist,'waist'],
+      ['Quadril (cm)',pa.hip,la.hip,''],
+      ['ICQ',pa.whr,la.whr,'whr'],
+      ['Braço direito (cm)',pa.armR,la.armR,''],
+      ['Braço esquerdo (cm)',pa.armL,la.armL,''],
+      ['Panturrilha direita (cm)',pa.calfR,la.calfR,''],
+      ['Panturrilha esquerda (cm)',pa.calfL,la.calfL,''],
+      ['TUG — tempo (s)',pt.tug,lt.tug,'tug'],
+      ['Levantar e Sentar — 30 s (repetições)',pt.sitStand,lt.sitStand,'sitStand'],
+      ['Preensão manual — direita',pt.gripR,lt.gripR,'grip'],
+      ['Preensão manual — esquerda',pt.gripL,lt.gripL,'grip'],
+      ['Banco de Wells',pt.wells,lt.wells,'wells'],
+      ['VO₂ Máx.',pc.vo2,lc.vo2,'vo2'],
+      ['FC de repouso (bpm)',pc.fcRest,lc.fcRest,''],
+      ['FC máxima observada (bpm)',pc.fcMaxObs,lc.fcMaxObs,''],
+      ['FC máxima estimada (bpm)',pc.fcMaxCalc,lc.fcMaxCalc,'']
+    ];
+    return rows.filter(r=>r[1]!==null&&r[1]!==undefined&&r[1]!=='' || r[2]!==null&&r[2]!==undefined&&r[2]!=='').map(r=>{
+      const st=r[3]?reportStatus(r[3],r[1],r[2]):'—';
+      return `<tr><td>${escF(r[0])}</td><td>${escF(reportValue(r[1]))}</td><td>${escF(reportValue(r[2]))}</td><td>${escF(reportDiff(r[1],r[2]))}</td><td>${escF(st)}</td></tr>`;
+    }).join('');
+  }
+  function reportExercises(plan){
+    const strength=plan?.strength||{}, days=[];
+    ['A','B','C','D','E'].forEach(day=>{
+      const arr=Array.isArray(strength[day])?strength[day]:[];
+      const applied=arr.filter(ex=>ex&&(
+        cleanText(ex.name)||cleanText(ex.load)||cleanText(ex.sets)||cleanText(ex.reps)||cleanText(ex.interval)||cleanText(ex.obs)||Object.values(ex.reg||{}).some(cleanText)
+      ));
+      if(applied.length) days.push({day,exercises:applied});
+    });
+    return days;
+  }
+  function reportAerobic(plan){
+    const a=plan?.aerobic||{};
+    const fields=[
+      ['Modalidade','modality'],['Frequência','frequency'],['Duração','duration'],['Intensidade','intensity'],
+      ['Objetivo','objective'],['FC-alvo','fcTarget'],['FC máxima','fcMax'],['FC repouso','fcRest'],['FC reserva','fcReserve'],
+      ['Velocidade','speed'],['Distância','distance'],['PACE','pace'],['Resistência','resistance'],['Nível','level'],
+      ['Partes funcionais','functionalParts'],['Observações','obs']
+    ];
+    return fields.map(([label,key])=>{
+      let v=a[key]; if(Array.isArray(v)) v=v.filter(Boolean).join(', ');
+      return [label,v];
+    }).filter(x=>cleanText(x[1]));
+  }
+  function reportCurrentAssessmentHTML(a){
+    if(!a) return '<p class="muted">Nenhuma avaliação cadastrada para este paciente.</p>';
+    const an=a.anamnese||{}, antr=a.anthropometry||{}, t=a.tests||{}, c=a.cardio||{};
+    let html='';
+    html+=`<div class="assessment-meta"><b>Data da avaliação:</b> ${escF(dateF(a.date))} &nbsp; | &nbsp; <b>Professor:</b> ${escF(a.professor||'—')}</div>`;
+    const anamRows=[['Condições relevantes',an.conditions],['Medicamentos',an.meds],['Histórico de atividade física',an.history],['Limitações / restrições',an.limits]];
+    if(anamRows.some(r=>cleanText(r[1]))) html+=`<h4>ANAMNESE</h4><table class="simple-table"><tbody>${reportTableRows(anamRows)}</tbody></table>`;
+    const anthRows=[
+      ['Peso (kg)',antr.weight],['Altura (m)',antr.height],['IMC',antr.bmi],['Cintura (cm)',antr.waist],['Quadril (cm)',antr.hip],['ICQ',antr.whr],
+      ['Braço direito (cm)',antr.armR],['Braço esquerdo (cm)',antr.armL],['Panturrilha direita (cm)',antr.calfR],['Panturrilha esquerda (cm)',antr.calfL],
+      ['Composição corporal / bioimpedância',antr.body],['Observações antropométricas',antr.obs]
+    ];
+    if(anthRows.some(r=>cleanText(r[1]))) html+=`<h4>ANTROPOMETRIA</h4><table class="simple-table"><tbody>${reportTableRows(anthRows)}</tbody></table>`;
+    const testRows=[
+      ['TUG — Risk Queda / Timed Up and Go (s)',t.tug],['Levantar e Sentar — 30 s (repetições)',t.sitStand],
+      ['Preensão manual — direita',t.gripR],['Preensão manual — esquerda',t.gripL],['Banco de Wells — flexibilidade',t.wells],['Observações dos testes',t.obs]
+    ];
+    if(testRows.some(r=>cleanText(r[1]))) html+=`<h4>TESTES FÍSICOS E FUNCIONAIS</h4><table class="simple-table"><tbody>${reportTableRows(testRows)}</tbody></table>`;
+    const cardioRows=[
+      ['Protocolo utilizado',c.protocol||c.vo2Protocol],['VO₂ Máx. (ml/kg/min)',c.vo2],['FC de repouso (bpm)',c.fcRest],
+      ['FC máxima observada (bpm)',c.fcMaxObs],['FC máxima estimada (bpm)',c.fcMaxCalc],['FC-alvo',c.fcTarget]
+    ];
+    if(cardioRows.some(r=>cleanText(r[1]))) html+=`<h4>AVALIAÇÃO CARDIORRESPIRATÓRIA</h4><table class="simple-table"><tbody>${reportTableRows(cardioRows)}</tbody></table>`;
+    if(cleanText(a.general)) html+=`<h4>OBSERVAÇÕES GERAIS DA AVALIAÇÃO</h4><div class="report-note">${escF(a.general)}</div>`;
     return html;
   }
+  function reportHTML(m){
+    const p=m.p, diagnoses=reportDiagnoses(p), as=m.assessments||[], last=as.at(-1)||null, prev=as.length>=2?as[as.length-2]:null;
+    const plan=m.plan, days=reportExercises(plan), aerobic=reportAerobic(plan);
+    const age=p.age!=null?p.age:(typeof calcAgeFromBirth==='function'?calcAgeFromBirth(p.birth):'');
+    const general=[['Nome',p.name],['Registro interno',reportInternalId(p)],['Data de nascimento',p.birth?dateF(p.birth):''],['Idade',age!==''?age+' anos':''],['Sexo',p.sex],['Unidade',p.unit],['Nível de apoio',p.supportLevel],['Observações do cadastro',p.obs||p.observations]];
+    let html='<div class="clean-report">';
+    html+='<div class="card clean-section"><div class="report-brand">CASA DE DAVID</div><h2>Moviment’ Up — Treinamento Resistido Inclusivo</h2><p class="report-subtitle">RELATÓRIO DO PACIENTE</p><h3>1. DADOS GERAIS DO PACIENTE</h3><table class="simple-table"><tbody>';
+    general.forEach(([label,value])=>{if(cleanText(value))html+=`<tr><th>${escF(label)}</th><td>${escF(cleanText(value))}</td></tr>`;});
+    html+='</tbody></table></div>';
 
-  // RELATÓRIO: substituição somente da apresentação, sem alterar armazenamento/sincronização.
+    html+='<div class="card clean-section"><h3>2. DIAGNÓSTICOS</h3>';
+    const principal=diagnoses.find(d=>cleanText(d.name).toLowerCase()===cleanText(p.diagnosis).toLowerCase())||null;
+    if(principal) html+=`<p class="diagnosis-main"><b>Diagnóstico principal:</b> ${escF(principal.name)}${principal.classification?' — '+escF(principal.classification):''}</p>`;
+    const others=diagnoses.filter(d=>!principal || d!==principal);
+    if(others.length) html+='<p><b>Diagnósticos preenchidos:</b></p><ul class="diagnosis-list">'+others.map(d=>`<li>${escF(d.name)}${d.classification?' — '+escF(d.classification):''}</li>`).join('')+'</ul>';
+    if(cleanText(p.obs)) html+=`<p class="diagnosis-note"><b>Observação inserida no cadastro:</b> ${escF(p.obs)}</p>`;
+    if(!principal&&!others.length&&!cleanText(p.obs)) html+='<p class="muted">Nenhum diagnóstico cadastrado.</p>';
+    html+='</div>';
+
+    html+='<div class="card clean-section"><h3>AVALIAÇÃO FÍSICA E FUNCIONAL</h3>';
+    if(last){ html+=reportCurrentAssessmentHTML(last); }
+    else html+='<p class="muted">Nenhuma avaliação física cadastrada para este paciente.</p>';
+    if(prev&&last){
+      html+='<h4>COMPARAÇÃO DAS AVALIAÇÕES</h4>';
+      html+=`<p><b>Avaliação anterior:</b> ${escF(dateF(prev.date))} &nbsp; | &nbsp; <b>Avaliação posterior:</b> ${escF(dateF(last.date))}</p>`;
+      html+='<table class="comparison-table"><thead><tr><th>Indicador</th><th>Anterior</th><th>Posterior</th><th>Variação</th><th>Situação</th></tr></thead><tbody>'+reportComparisonRows(prev,last)+'</tbody></table>';
+      html+='<p class="muted comparison-note">A comparação considera somente os valores registrados nas duas datas. “Progressão”, “Estabilidade” e “Regressão” são apresentadas apenas quando há dados numéricos comparáveis.</p>';
+    } else if(as.length===1){
+      html+='<p class="muted comparison-note">Há somente uma avaliação cadastrada; ainda não há duas datas para comparação.</p>';
+    }
+    html+='</div>';
+
+    html+='<div class="card clean-section"><h3>3. TREINO APLICADO — PRESCRIÇÃO</h3>';
+    if(!plan) html+='<p class="muted">Nenhuma prescrição de treinamento cadastrada para este paciente.</p>';
+    else{
+      const meta=[];
+      if(cleanText(plan.professor))meta.push(`<b>Professor:</b> ${escF(plan.professor)}`);
+      if(cleanText(plan.date))meta.push(`<b>Data da prescrição:</b> ${escF(dateF(plan.date))}`);
+      if(meta.length)html+=`<p class="plan-meta">${meta.join(' &nbsp; | &nbsp; ')}</p>`;
+      const objectives=uniqueTexts(Array.isArray(plan.objectives)?plan.objectives:[plan.objectives]);
+      if(objectives.length)html+=`<p><b>Objetivos:</b> ${escF(objectives.join(', '))}</p>`;
+      days.forEach(day=>{
+        html+=`<div class="training-day"><h4>TREINO ${escF(day.day)}</h4><table class="training-table"><thead><tr><th>Exercício aplicado</th><th>Observações</th></tr></thead><tbody>`;
+        day.exercises.forEach(ex=>{
+          const detail=[];
+          if(cleanText(ex.load))detail.push('Carga: '+cleanText(ex.load));
+          if(cleanText(ex.sets))detail.push('Séries: '+cleanText(ex.sets));
+          if(cleanText(ex.reps))detail.push('Repetições: '+cleanText(ex.reps));
+          if(cleanText(ex.interval))detail.push('Intervalo: '+cleanText(ex.interval));
+          const regs=[];['A','F','D','E','B'].forEach(k=>{const v=cleanText(ex.reg?.[k]);if(v)regs.push(k+': '+v)});
+          if(regs.length)detail.push('Regulação: '+regs.join(' | '));
+          html+=`<tr><td><b>${escF(cleanText(ex.name)||'Exercício')}</b>${detail.length?'<div class="exercise-detail">'+escF(detail.join(' • '))+'</div>':''}</td><td>${escF(cleanText(ex.obs)||'')}</td></tr>`;
+        });
+        html+='</tbody></table></div>';
+      });
+      if(aerobic.length){
+        html+='<div class="training-day aerobic-block"><h4>TREINAMENTO AERÓBICO</h4><table class="training-table"><tbody>';
+        aerobic.forEach(([label,value])=>html+=`<tr><th>${escF(label)}</th><td>${escF(cleanText(value))}</td></tr>`);
+        html+='</tbody></table><p class="muted aerobic-note">Somente informações preenchidas na prescrição atual, sem comparações.</p></div>';
+      }
+      if(!days.length&&!aerobic.length) html+='<p class="muted">Nenhum exercício ou informação aeróbica preenchida na prescrição atual.</p>';
+    }
+    html+='</div><div class="report-footer"><b>Data de emissão:</b> '+new Date().toLocaleDateString('pt-BR')+'<br><span>Relatório objetivo: cadastro, diagnósticos, avaliação física/funcional com comparação e prescrição atual.</span></div></div>';
+    return html;
+  }
+  function buildCompleteReport(pid){
+    const p=A(db.patients).find(x=>x&&String(x.id)===String(pid));
+    if(!p)return null;
+    const plan=typeof getTrainingPlan==='function'?getTrainingPlan(pid):A(db.trainingPlans).find(x=>x&&String(x.patientId)===String(pid))||null;
+    return {p,plan,assessments:reportAssessmentList(pid)};
+  }
   window.renderReport=function(){
-    const sel=document.getElementById('rPatient'),el=document.getElementById('reportContent');
-    if(!sel||!el)return;
-    const pid=sel.value||'';
-    if(!pid){el.innerHTML='<div class="notice">Selecione um paciente.</div>';return}
-    try{
-      const m=buildCompleteReport(pid);
-      el.innerHTML=m?reportHTML(m):'<div class="notice danger">Paciente não encontrado.</div>';
-    }catch(e){console.error('Moviment Up — relatório completo:',e);el.innerHTML='<div class="notice danger">Erro ao montar o relatório. Os dados permanecem preservados.</div>'}
+    const sel=document.getElementById('rPatient'),el=document.getElementById('reportContent');if(!sel||!el)return;
+    const pid=sel.value||'';if(!pid){el.innerHTML='<div class="notice">Selecione um paciente.</div>';return}
+    try{const model=buildCompleteReport(pid);el.innerHTML=model?reportHTML(model):'<div class="notice danger">Paciente não encontrado.</div>'}
+    catch(err){console.error('Erro ao montar relatório:',err);el.innerHTML='<div class="notice danger">Erro ao carregar o relatório. Os dados permanecem preservados.</div>'}
   };
-
   window.generatePatientPDF=function(){
-    const sel=document.getElementById('rPatient'),pid=sel&&sel.value?sel.value:'';
-    if(!pid){alert('Selecione um paciente antes de imprimir o relatório.');return}
-    const m=buildCompleteReport(pid);
-    if(!m){alert('Paciente não encontrado.');return}
-    renderReport();
-    const source=document.getElementById('reportContent');
-    if(!source)return;
+    const sel=document.getElementById('rPatient'),pid=sel&&sel.value?sel.value:'';if(!pid){alert('Selecione um paciente antes de imprimir o relatório.');return}
+    let model;try{model=buildCompleteReport(pid)}catch(err){console.error(err);alert('Não foi possível montar o relatório. Os dados estão preservados.');return}
+    if(!model?.p){alert('Paciente não encontrado.');return}
     const old=document.getElementById('printReportShell');if(old)old.remove();
-    const shell=document.createElement('div');shell.id='printReportShell';
-    shell.innerHTML='<div class="print-report-header"><img class="print-logo" src="logo.png" alt="Casa de David"><div class="print-title"><h1>Moviment’ Up — Treinamento Resistido Inclusivo</h1><div>Casa de David — Tabernáculo Espírita para Excepcionais</div><h2>RELATÓRIO COMPLETO DO PACIENTE</h2><div><b>Paciente:</b> '+escF(m.p.name||'Paciente')+'</div><div><b>Data de emissão:</b> '+new Date().toLocaleDateString('pt-BR')+'</div></div></div>'+source.innerHTML;
-    document.body.appendChild(shell);document.body.classList.add('printing-report');
-    setTimeout(function(){window.print();setTimeout(function(){document.body.classList.remove('printing-report');shell.remove()},900)},150);
+    const shell=document.createElement('div');shell.id='printReportShell';shell.innerHTML=reportHTML(model);document.body.appendChild(shell);
+    document.body.classList.add('printing-report');setTimeout(()=>{window.print();setTimeout(()=>{document.body.classList.remove('printing-report');shell.remove()},900)},150);
   };
 
   // ============================================================
@@ -5343,25 +5534,49 @@ setTimeout(render,200);setTimeout(render,800);
 @media print{
   #printReportShell{display:none}
   body.printing-report> *:not(#printReportShell){display:none!important}
-  body.printing-report{margin:0!important;background:#fff!important}
-  body.printing-report #printReportShell{display:block!important;font-family:Arial,Helvetica,sans-serif;color:#111;font-size:11px;padding:10mm}
+  body.printing-report #printReportShell{display:block!important;font-family:Arial,Helvetica,sans-serif;color:#111;font-size:10.5px;padding:9mm;line-height:1.3}
   #printReportShell h1{font-size:20px;margin:0 0 3px}
-  #printReportShell h2{font-size:17px;margin:14px 0 7px}
-  #printReportShell h3{font-size:14px;margin:12px 0 6px;border-bottom:1px solid #aaa;padding-bottom:3px}
-  #printReportShell h4{font-size:12px;margin:9px 0 5px}
-  #printReportShell p{margin:3px 0;line-height:1.35}
+  #printReportShell h2{font-size:16px;margin:0 0 3px;color:#0753aa}
+  #printReportShell h3{font-size:13px;margin:13px 0 6px;border-bottom:1.5px solid #075fc7;padding-bottom:3px;color:#0753aa}
+  #printReportShell h4{font-size:11px;margin:10px 0 5px;border-bottom:1px solid #bbb;padding-bottom:2px}
+  #printReportShell p{margin:4px 0;line-height:1.35}
   #printReportShell table{width:100%;border-collapse:collapse;margin:5px 0 9px;page-break-inside:auto}
-  #printReportShell th,#printReportShell td{border:1px solid #999;padding:4px;vertical-align:top;text-align:left;word-break:break-word}
-  #printReportShell th{background:#f2f3f4}
+  #printReportShell th,#printReportShell td{border:1px solid #aeb4ba;padding:4px;vertical-align:top;text-align:left;word-break:break-word}
+  #printReportShell th{background:#f2f3f4;font-weight:700}
   #printReportShell tr{page-break-inside:avoid}
   #printReportShell .card{box-shadow:none;border:0;margin:0 0 8px;padding:0}
-  #printReportShell .print-report-header{border-bottom:2px solid #075fc7;padding-bottom:8px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start}
-  #printReportShell .print-logo{width:65px;height:65px;object-fit:contain}
-  #printReportShell .print-title h1{color:#0753aa}
-  #printReportShell .all-data-list{gap:3px}
-  #printReportShell .all-data-item{border:0;border-bottom:1px dotted #bbb;border-radius:0;padding:2px}
-  #printReportShell .assessment-block{page-break-inside:avoid;border:0;padding:0}
+  #printReportShell .report-brand{font-size:12px;font-weight:800;letter-spacing:.3px}
+  #printReportShell .report-subtitle{font-weight:700;margin-bottom:7px}
+  #printReportShell .diagnosis-list{margin:4px 0 6px;padding-left:18px}
+  #printReportShell .diagnosis-list li{margin:2px 0}
+  #printReportShell .diagnosis-main{padding:5px 7px;border-left:3px solid #075fc7;background:#f4f7fb}
+  #printReportShell .diagnosis-note,#printReportShell .report-note{padding:5px 7px;background:#fafafa;border:1px solid #ddd}
+  #printReportShell .assessment-meta{padding:5px 7px;background:#f4f7fb;border:1px solid #d7e0ea;margin-bottom:5px}
+  #printReportShell .comparison-table th,#printReportShell .comparison-table td{font-size:9.5px}
+  #printReportShell .comparison-note,#printReportShell .aerobic-note{font-size:9px}
+  #printReportShell .exercise-detail{font-size:9.5px;margin-top:3px}
+  #printReportShell .clean-section{page-break-inside:auto}
+  #printReportShell .training-day{page-break-inside:avoid}
+  #printReportShell .report-footer{margin-top:12px;padding-top:6px;border-top:1px solid #bbb;font-size:9px}
+  @media print{#printReportShell{display:block!important}.clean-section{page-break-inside:auto}.training-day,.assessment-meta,.simple-table,.comparison-table{page-break-inside:avoid}}
 }
+
+  /* RELATÓRIO ENXUTO — cadastro + diagnósticos + prescrição atual */
+  .clean-report{font-size:13px;color:#17252b}
+  .clean-report .card{margin-bottom:12px}
+  .report-brand{font-size:12px;font-weight:800;letter-spacing:.5px;color:var(--petroleo)}
+  .report-subtitle{font-weight:800;margin:4px 0 12px;color:#0753aa}
+  .report-info-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 12px}
+  .report-info{border:1px solid #d8dee2;border-radius:6px;padding:7px;background:#fff;display:flex;flex-direction:column;gap:2px}
+  .report-info span{font-size:10px;text-transform:uppercase;font-weight:800;color:#66777e}
+  .report-info b{font-size:13px;font-weight:600;white-space:pre-wrap;overflow-wrap:anywhere}
+  .clean-section h3{margin-top:0;color:#0753aa;border-bottom:1px solid #d8dee2;padding-bottom:5px}
+  .diagnosis-list{margin:6px 0 0;padding-left:22px}.diagnosis-list li{padding:2px 0}
+  .plan-meta{margin:0 0 8px}.training-day{margin-top:12px}.training-day h4{margin:0 0 5px;color:var(--petroleo);font-size:13px}
+  .training-table{width:100%;border-collapse:collapse;table-layout:fixed}.training-table th,.training-table td{border:1px solid #d8dee2;padding:5px 6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}.training-table th{background:#f2f5f7;font-size:11px}.training-table td{font-size:11px}
+  .report-footer{border-top:1px solid #d8dee2;padding:8px 2px;font-size:10px;color:#66777e}
+  @media(max-width:700px){.report-info-grid{grid-template-columns:1fr}.training-table{font-size:10px}.training-table th,.training-table td{padding:4px}}
+  @media print{.clean-report .card{box-shadow:none}.training-day{break-inside:avoid}.training-table tr{break-inside:avoid}}
 </style>
 
 <script src="pwa-bridge.js"></script>
