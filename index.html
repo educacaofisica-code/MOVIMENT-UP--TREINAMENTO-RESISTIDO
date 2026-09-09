@@ -918,7 +918,11 @@ function loadDB(){
      assessments:Array.isArray(data?.assessments)?data.assessments:[],
      training:Array.isArray(data?.training)?data.training:[],
      trainingPlans:Array.isArray(data?.trainingPlans)?data.trainingPlans:[],
-     trainingProgressions:Array.isArray(data?.trainingProgressions)?data.trainingProgressions:[]
+     trainingProgressions:Array.isArray(data?.trainingProgressions)?data.trainingProgressions:[],
+     trainingSchedules:Array.isArray(data?.trainingSchedules)?data.trainingSchedules:[],
+     trainingAttendance:Array.isArray(data?.trainingAttendance)?data.trainingAttendance:[],
+     aerobicLogs:Array.isArray(data?.aerobicLogs)?data.aerobicLogs:[],
+     trainingCancellations:Array.isArray(data?.trainingCancellations)?data.trainingCancellations:[]
    };
  }catch(e){
    console.error('Erro ao carregar dados:',e);
@@ -5605,8 +5609,12 @@ setTimeout(render,200);setTimeout(render,800);
     return (db.trainingPlans||[]).find(p=>String(p.patientId)===String(pid))||null;
   }
   function hLogs(pid){
-    return (db.training||[])
-      .filter(x=>String(x.patientId)===String(pid)&&(x.kind==='daily'||x.kind==null))
+    const strength=(db.training||[])
+      .filter(x=>String(x.patientId)===String(pid)&&(x.kind==='daily'||x.kind==null));
+    const aerobic=(db.aerobicLogs||[])
+      .filter(x=>String(x.patientId)===String(pid))
+      .map(x=>Object.assign({kind:'aerobicDaily'},x));
+    return strength.concat(aerobic)
       .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
   }
   function hExercises(plan){
@@ -5783,22 +5791,33 @@ setTimeout(render,200);setTimeout(render,800);
 
   window.generateTrainingHistoryPDF=function(pid){
     const p=hPatient(pid), logs=hLogs(pid);
-    const title=`Histórico de Treinos — ${p?.name||'Paciente'}`;
-    const strength=logs.filter(l=>trainingHistoryKind(l)==='strength');
-    const aerobic=logs.filter(l=>trainingHistoryKind(l)==='aerobic');
-    const other=logs.filter(l=>trainingHistoryKind(l)==='other');
-    let body=`<div class="brand"><img src="${logo}" alt="Casa de David"><div><h1>Histórico de Treinos</h1><div class="subtitle">Moviment' Up — Treinamento Resistido Inclusivo</div></div></div>
-      <div class="patient"><b>Paciente:</b> ${hEsc(p?.name||'—')}</div>`;
+    if(!p){alert('Paciente não encontrado.');return;}
+    const title=`Histórico de Treinos — ${p.name||'Paciente'}`;
+    const old=document.getElementById('trainingHistoryPrintShell');
+    if(old)old.remove();
+
+    let body=`<div class="brand"><img src="logo.png" alt="Casa de David"><div><h1>Histórico de Treinos</h1><div class="subtitle">Moviment' Up — Treinamento Resistido Inclusivo</div></div></div>
+      <div class="patient"><b>Paciente:</b> ${hEsc(p.name||'—')} &nbsp; <b>Data de emissão:</b> ${new Date().toLocaleDateString('pt-BR')}</div>`;
+
     body+=`<h2>Treinos de musculação</h2>${historyLogRows(logs,'strength')}`;
-    body+=`<h2>Treinos aeróbicos</h2>${historyLogRows(logs,'aerobic')}`;
-    if(other.length) body+=`<h2>Outros registros de treinamento</h2>${historyLogRows(logs,'other')}`;
-    if(!logs.length) body+='<p>Nenhum treino realizado registrado para este paciente.</p>';
-    const w=window.open('','_blank','width=1100,height=800');
-    if(!w){alert('Permita pop-ups para gerar o PDF do histórico.');return;}
-    w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${hEsc(title)}</title><style>
-      *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#17252b;padding:24px;font-size:12px}.brand{display:flex;align-items:center;gap:16px;border-bottom:2px solid #0f4c5c;padding-bottom:10px;margin-bottom:12px}.brand img{width:105px;height:auto;object-fit:contain}.brand h1{margin:0;color:#0f4c5c;font-size:21px}.subtitle{color:#0753aa;font-weight:700;margin-top:3px}.patient{border:1px solid #d8dee2;background:#f7f9fa;border-radius:6px;padding:8px;margin-bottom:14px}h2{color:#0753aa;font-size:15px;border-bottom:1px solid #d8dee2;padding-bottom:5px;margin:18px 0 8px}table{width:100%;border-collapse:collapse;margin:6px 0 14px;table-layout:auto}th,td{border:1px solid #d8dee2;padding:5px 6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{background:#f2f5f7;font-size:10.5px}td{font-size:10.5px}tr{break-inside:avoid}.muted{color:#66777e}.footer{margin-top:18px;border-top:1px solid #d8dee2;padding-top:7px;color:#66777e;font-size:9px}@media print{body{padding:10px}.brand{break-inside:avoid}h2{break-after:avoid}table{break-inside:auto}}
-      </style></head><body>${body}<div class="footer">Relatório gerado a partir do histórico de treinos registrados na plataforma Moviment' Up.</div><script>window.onload=function(){setTimeout(function(){window.print()},300)}<\/script></body></html>`);
-    w.document.close();
+    body+=`<h2>Treinos aeróbicos — registros diários</h2>${historyLogRows(logs,'aerobic')}`;
+    const other=logs.filter(l=>trainingHistoryKind(l)==='other');
+    if(other.length)body+=`<h2>Outros registros de treinamento</h2>${historyLogRows(logs,'other')}`;
+    if(!logs.length)body+='<p>Nenhum treino realizado registrado para este paciente.</p>';
+
+    const shell=document.createElement('div');
+    shell.id='trainingHistoryPrintShell';
+    shell.innerHTML=`<div class="training-history-print">${body}<div class="footer">Relatório gerado a partir do histórico de treinos registrados na plataforma Moviment' Up.</div></div>`;
+    document.body.appendChild(shell);
+    document.body.classList.add('printing-training-history');
+
+    setTimeout(()=>{
+      window.print();
+      setTimeout(()=>{
+        document.body.classList.remove('printing-training-history');
+        shell.remove();
+      },900);
+    },150);
   };
 
   window.printHistoryTraining=function(pid){
@@ -5823,6 +5842,30 @@ setTimeout(render,200);setTimeout(render,800);
 
 })();
 </script>
+<style id="moviment-up-training-history-pdf-style">
+#trainingHistoryPrintShell{display:none}
+@media print{
+  body.printing-training-history > *:not(#trainingHistoryPrintShell){display:none!important}
+  body.printing-training-history{margin:0!important;background:#fff!important}
+  body.printing-training-history #trainingHistoryPrintShell{
+    display:block!important;font-family:Arial,Helvetica,sans-serif;color:#17252b;
+    font-size:12px;padding:12mm;background:#fff
+  }
+  #trainingHistoryPrintShell .brand{display:flex;align-items:center;gap:16px;border-bottom:2px solid #075fc7;padding-bottom:10px;margin-bottom:12px;break-inside:avoid}
+  #trainingHistoryPrintShell .brand img{width:105px;height:auto;object-fit:contain}
+  #trainingHistoryPrintShell .brand h1{margin:0;color:#0753aa;font-size:21px}
+  #trainingHistoryPrintShell .subtitle{color:#e05288;font-weight:700;margin-top:3px}
+  #trainingHistoryPrintShell .patient{border:1px solid #d8dee2;background:#f7f9fa;border-radius:6px;padding:8px;margin-bottom:14px}
+  #trainingHistoryPrintShell h2{color:#0753aa;font-size:15px;border-bottom:1px solid #d8dee2;padding-bottom:5px;margin:18px 0 8px;break-after:avoid}
+  #trainingHistoryPrintShell table{width:100%;border-collapse:collapse;margin:6px 0 14px;table-layout:auto}
+  #trainingHistoryPrintShell th,#trainingHistoryPrintShell td{border:1px solid #d8dee2;padding:5px 6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
+  #trainingHistoryPrintShell th{background:#f2f5f7;font-size:10.5px}
+  #trainingHistoryPrintShell td{font-size:10.5px}
+  #trainingHistoryPrintShell tr{break-inside:avoid}
+  #trainingHistoryPrintShell .muted{color:#66777e}
+  #trainingHistoryPrintShell .footer{margin-top:18px;border-top:1px solid #d8dee2;padding-top:7px;color:#66777e;font-size:9px}
+}
+</style>
 <style id="moviment-up-history-training-style">
 .history-tools{margin-top:14px}
 .history-tools .section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
