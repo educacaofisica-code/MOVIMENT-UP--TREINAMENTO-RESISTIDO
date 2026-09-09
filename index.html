@@ -2103,7 +2103,7 @@ document.getElementById('patientAssessmentsModal')?.addEventListener('click',e=>
   }
 
   function buildSuggestedPlan(pid){
-    const s=buildSuggestions(pid);const as=assessmentsFor(pid),last=as.at(-1),p=db.patients.find(x=>x.id===pid);if(!s||!p)return null;
+    const s=window.buildSuggestions(pid);const as=assessmentsFor(pid),last=as.at(-1),p=db.patients.find(x=>x.id===pid);if(!s||!p)return null;
     const age=p.age!=null?p.age:calcAgeFromBirth(p.birth),cardio=last?.cardio||{},fc=cardio.fcMaxCalc??fcMaxBy(cardio.fcMaxProtocol||'Tanaka',age,p.sex);
     const warm=age!=null&&age>=60?'5–10 min de aquecimento progressivo':'5–10 min de aquecimento';
     const cardioZone=fc?`${Math.round(fc*.60)}–${Math.round(fc*.70)} bpm (Zona 2 moderada)`:'zona de intensidade definida após FCmáx';
@@ -2218,6 +2218,7 @@ document.getElementById('patientAssessmentsModal')?.addEventListener('click',e=>
  ensureDB();
  function esc2(x){return esc(x)}
  function today(){return new Date().toISOString().slice(0,10)}
+ window.today=today;
  function iso(d){return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10)}
  function schedules(pid){return db.trainingSchedules.filter(x=>x.patientId===pid)}
  function attend(pid){return db.trainingAttendance.filter(x=>x.patientId===pid)}
@@ -2321,7 +2322,7 @@ const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(win
    wrap.appendChild(card);v41RenderAll();
  });
  mo.observe(document.body,{childList:true,subtree:true});
- setTimeout(()=>{const wrap=document.getElementById('v41FrequencyUI');if(wrap&&!document.getElementById('v41CancelCard')){const card=document.createElement('div');card.className='card';card.id='v41CancelCard';card.innerHTML='<div class="section-head"><h2>Cancelar aula programada</h2><span class="muted small">Aula cancelada não conta como falta.</span></div><div class="grid"><label>Data<input type="date" id="v41CancelDate" value="'+new Date().toISOString().slice(0,10)()+'"></label><label>Motivo<select id="v41CancelReason"><option value="">Selecione</option><option>Feriado</option><option>Cancelamento institucional</option><option>Manutenção</option><option>Evento institucional</option><option>Falta do professor</option><option>Outro</option></select></label></div><div class="actions"><button class="btn" onclick="v41CancelClass()">Cancelar aula</button></div><div id="v41CancelTable"></div>';wrap.appendChild(card);v41RenderAll()}},200);
+ setTimeout(()=>{const wrap=document.getElementById('v41FrequencyUI');if(wrap&&!document.getElementById('v41CancelCard')){const card=document.createElement('div');card.className='card';card.id='v41CancelCard';card.innerHTML='<div class="section-head"><h2>Cancelar aula programada</h2><span class="muted small">Aula cancelada não conta como falta.</span></div><div class="grid"><label>Data<input type="date" id="v41CancelDate" value="'+new Date().toISOString().slice(0,10)+'"></label><label>Motivo<select id="v41CancelReason"><option value="">Selecione</option><option>Feriado</option><option>Cancelamento institucional</option><option>Manutenção</option><option>Evento institucional</option><option>Falta do professor</option><option>Outro</option></select></label></div><div class="actions"><button class="btn" onclick="v41CancelClass()">Cancelar aula</button></div><div id="v41CancelTable"></div>';wrap.appendChild(card);v41RenderAll()}},200);
  // Add frequency summary to PDF by wrapping the report function.
  const originalReport=window.renderTrainingReportHTML;
  window.renderTrainingReportHTML=function(pid){let base=originalReport(pid),start=iso(new Date(new Date().getFullYear(),new Date().getMonth(),1)),end=iso(new Date(new Date().getFullYear(),new Date().getMonth()+1,0)),oldPid=currentTrainingPatientId;currentTrainingPatientId=pid;let r=v41Calc(start,end);currentTrainingPatientId=oldPid;let reason={};r.details.filter(x=>x.rec&&x.p.type==='resistido'&&x.rec.status==='ausente').forEach(x=>reason[x.rec.reason]=(reason[x.rec.reason]||0)+1);let extra='<div class="card"><h3>Frequência às atividades</h3><table><tr><th>Programadas</th><th>Participações</th><th>Ausências</th><th>Frequência</th><th>Ausência</th></tr><tr><td>'+r.scheduled+'</td><td>'+r.part+'</td><td>'+r.abs+'</td><td>'+((r.scheduled?r.part/r.scheduled*100:0).toFixed(0))+'%</td><td>'+((r.scheduled?r.abs/r.scheduled*100:0).toFixed(0))+'%</td></tr></table>'+(Object.keys(reason).length?'<h4>Motivos das ausências</h4><table><tr><th>Motivo</th><th>Quantidade</th><th>% das faltas</th></tr>'+Object.entries(reason).map(([k,v])=>'<tr><td>'+esc(k)+'</td><td>'+v+'</td><td>'+((v/r.abs)*100).toFixed(0)+'%</td></tr>').join('')+'</table>':'')+'</div>';return base+extra};
@@ -2713,7 +2714,7 @@ const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(win
   };
   window.renderClinicalSuggestions=function(pid){
     const el=document.getElementById('clinicalSuggestionContent'); if(!el)return;
-    const s=buildSuggestions(pid);
+    const s=window.buildSuggestions(pid);
     if(!s){el.innerHTML='<p class="muted">Selecione um paciente para visualizar sugestões.</p>';return}
     const list=(title,items,action)=>`<div class="suggest-block"><h4>${title}</h4><ul>${items.map(x=>`<li>${esc(x)}${action?` <button type="button" class="btn tiny secondary" onclick="addSuggestionToTraining('${esc(x).replace(/'/g,"&#39;")}','A')">+ A</button><button type="button" class="btn tiny secondary" onclick="addSuggestionToTraining('${esc(x).replace(/'/g,"&#39;")}','B')">+ B</button><button type="button" class="btn tiny secondary" onclick="addSuggestionToTraining('${esc(x).replace(/'/g,"&#39;")}','C')">+ C</button><button type="button" class="btn tiny secondary" onclick="addSuggestionToTraining('${esc(x).replace(/'/g,"&#39;")}','D')">+ D</button><button type="button" class="btn tiny secondary" onclick="addSuggestionToTraining('${esc(x).replace(/'/g,"&#39;")}','E')">+ E</button>`:''}</li>`).join('')}</ul></div>`;
     el.innerHTML=`<div class="small"><b>Deficiência/condição:</b> ${esc(s.deficiency.join(', ')||'Não informada')}<br><b>Diagnósticos:</b> ${esc(s.diagnoses.join(', ')||'Nenhum informado')}<br><b>Objetivos:</b> ${esc(s.objectives.join(', ')||'Não informados')}</div>
@@ -2811,7 +2812,7 @@ const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(win
 
   function esc2(x){return typeof esc==='function'?esc(x):String(x).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
   function suggestionMarkup(pid,target){
-    const s=buildSuggestions(pid);
+    const s=window.buildSuggestions(pid);
     if(!s) return '<p class="muted">Selecione um paciente para visualizar sugestões.</p>';
     const list=(title,items,action)=>{
       if(!items||!items.length) return '';
@@ -3168,7 +3169,7 @@ const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(win
   };
   const push=(arr,items)=>items.forEach(x=>{if(!arr.includes(x))arr.push(x)});
   function suggestionFromDatabase(pid){
-    const s=typeof buildSuggestions==='function'?buildSuggestions(pid):null;
+    const s=typeof window.buildSuggestions==='function'?window.buildSuggestions(pid):null;
     if(!s)return null;
     const text=(s.diagnoses||[]).join(' | ').toLowerCase();
     const defs=(s.deficiency||[]).join(' | ').toLowerCase();
