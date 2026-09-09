@@ -5067,6 +5067,302 @@ setTimeout(render,200);setTimeout(render,800);
   };
 })();
 </script>
+
+<!-- ============================================================
+     MOVIMENT' UP — CORREÇÃO FINAL CONTROLADA
+     Base: versão atual do sistema.
+     NÃO altera o bloco de sincronização Supabase/offline.
+     Corrige apenas:
+       1) relatório/PDF completo;
+       2) edição/exclusão da prescrição de treinamento salva;
+       3) ações claras para os exercícios já salvos.
+     ============================================================ -->
+<script id="moviment-up-final-controlled-fix">
+(function(){
+  'use strict';
+
+  const H={
+    'apikey':(typeof SUPABASE_KEY!=='undefined'?SUPABASE_KEY:''),
+    'Authorization':'Bearer '+(typeof SUPABASE_KEY!=='undefined'?SUPABASE_KEY:''),
+    'Content-Type':'application/json',
+    'Prefer':'return=minimal'
+  };
+
+  function A(v){return Array.isArray(v)?v:[]}
+  function O(v){return v&&typeof v==='object'&&!Array.isArray(v)?v:{} }
+  function escF(v){
+    return String(v==null?'':v)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function text(v){
+    if(v==null || v==='')return '—';
+    if(typeof v==='boolean')return v?'Sim':'Não';
+    if(Array.isArray(v))return v.map(text).join(', ')||'—';
+    if(typeof v==='object')return Object.entries(v).map(([k,x])=>label(k)+': '+text(x)).join(' | ');
+    return String(v);
+  }
+  function label(k){
+    const map={
+      id:'Identificador',patientId:'Paciente',date:'Data',createdAt:'Criado em',updatedAt:'Atualizado em',
+      name:'Nome',internalId:'Registro interno',birth:'Data de nascimento',age:'Idade',sex:'Sexo',unit:'Unidade',
+      diagnosis:'Diagnóstico',diagnoses:'Diagnósticos',diagnosisRecords:'Registros de diagnóstico',diagnosisDetail:'Detalhamento do diagnóstico',
+      otherDiagnosis:'Outro diagnóstico',deficiency:'Deficiência/condição',functionalConditions:'Condições funcionais',supportLevel:'Nível de apoio',
+      observations:'Observações',obs:'Observações',professor:'Professor',history:'Histórico',medications:'Medicamentos',
+      conditions:'Condições clínicas',limitations:'Limitações/restrições',restrictions:'Restrições',allergies:'Alergias',
+      anthropometry:'Antropometria',tests:'Testes físicos/funcionais',cardio:'Avaliação cardiorrespiratória',
+      weight:'Peso',height:'Altura',bmi:'IMC',waist:'Cintura',hip:'Quadril',whr:'ICQ',armR:'Braço direito',armL:'Braço esquerdo',
+      calfR:'Panturrilha direita',calfL:'Panturrilha esquerda',bodyComposition:'Composição corporal',
+      tug:'TUG',sitStand:'Sentar e levantar',gripR:'Preensão manual direita',gripL:'Preensão manual esquerda',wells:'Banco de Wells',
+      vo2:'VO₂',fcRest:'FC de repouso',fcMaxObs:'FC máxima observada',fcMaxCalc:'FC máxima estimada',fcTarget:'FC-alvo',
+      protocol:'Protocolo',objective:'Objetivo',objectives:'Objetivos',strength:'Treinamento resistido',aerobic:'Treinamento aeróbico',
+      modality:'Modalidade',frequency:'Frequência',duration:'Duração',intensity:'Intensidade',speed:'Velocidade',distance:'Distância',pace:'PACE',
+      load:'Carga',loadPrescribed:'Carga prescrita',loadPerformed:'Carga realizada',sets:'Séries',setsPrescribed:'Séries prescritas',setsPerformed:'Séries realizadas',
+      reps:'Repetições',repsPrescribed:'Repetições prescritas',repsPerformed:'Repetições realizadas',interval:'Intervalo',reg:'Regulagem',
+      regulation:'Regulagem utilizada',rpe:'Intensidade percebida (RPE)',fcInitial:'FC inicial',fcAvg:'FC média',fcFinal:'FC final',
+      exercise:'Exercício',workout:'Treino',kind:'Tipo de registro',type:'Tipo',exerciseName:'Exercício',oldValue:'Valor anterior',newValue:'Novo valor',
+      snapshot:'Snapshot',status:'Status',reason:'Motivo',program:'Programa',schedule:'Cronograma',attendance:'Frequência/participação'
+    };
+    return map[k]||String(k).replace(/([a-z])([A-Z])/g,'$1 $2').replace(/^./,x=>x.toUpperCase());
+  }
+  function skipKey(k){
+    return ['__movimentUpSyncBundle','sync','syncing','_sync','createdAt','updatedAt'].includes(k);
+  }
+  function renderValueBlock(v,depth){
+    if(depth>5)return '<div>'+escF(text(v))+'</div>';
+    if(v==null||v==='')return '<span class="muted">—</span>';
+    if(Array.isArray(v)){
+      if(!v.length)return '<span class="muted">—</span>';
+      return '<div class="all-data-list">'+v.map((x,i)=>'<div class="all-data-item"><b>'+(typeof x==='object'?'Registro '+(i+1):'')+'</b>'+renderValueBlock(x,depth+1)+'</div>').join('')+'</div>';
+    }
+    if(typeof v==='object'){
+      const rows=Object.entries(v).filter(([k])=>!skipKey(k));
+      if(!rows.length)return '<span class="muted">—</span>';
+      return '<table class="all-data-table"><tbody>'+rows.map(([k,x])=>'<tr><th>'+escF(label(k))+'</th><td>'+renderValueBlock(x,depth+1)+'</td></tr>').join('')+'</tbody></table>';
+    }
+    return '<span>'+escF(text(v))+'</span>';
+  }
+  function sectionFromObject(title,obj){
+    const rows=Object.entries(O(obj)).filter(([k])=>!skipKey(k));
+    if(!rows.length)return '';
+    return '<div class="card all-data-card"><h3>'+escF(title)+'</h3><table class="all-data-table"><tbody>'+rows.map(([k,v])=>'<tr><th>'+escF(label(k))+'</th><td>'+renderValueBlock(v,0)+'</td></tr>').join('')+'</tbody></table></div>';
+  }
+  function dateF(v){
+    if(!v)return '—';
+    try{ return typeof formatDate==='function'?formatDate(v):new Date(v).toLocaleDateString('pt-BR') }catch(e){return String(v)}
+  }
+  function patientAssessments(pid){return A(db.assessments).filter(x=>x&&String(x.patientId)===String(pid)).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')))}
+  function patientChildren(pid){
+    const keys=['training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
+    const out={};
+    keys.forEach(k=>out[k]=A(db[k]).filter(x=>x&&String(x.patientId)===String(pid)));
+    return out;
+  }
+
+  function buildCompleteReport(pid){
+    const p=A(db.patients).find(x=>x&&String(x.id)===String(pid));
+    if(!p)return null;
+    const as=patientAssessments(pid), ch=patientChildren(pid);
+    const plan=typeof getTrainingPlan==='function'?getTrainingPlan(pid):ch.trainingPlans[0]||null;
+    return {p,as,ch,plan};
+  }
+
+  function reportHTML(m){
+    const p=m.p;
+    const diagnoses=A(p.diagnoses);
+    const records=A(p.diagnosisRecords);
+    let html='<div class="complete-report">';
+    html+='<div class="card report-ident"><h2>CASA DE DAVID</h2><h3>Moviment’ Up — Treinamento Resistido Inclusivo</h3><p><b>RELATÓRIO COMPLETO DO PACIENTE</b></p>';
+    html+='<div class="report-meta"><p><b>Paciente:</b> '+escF(p.name)+'</p><p><b>Data de nascimento:</b> '+dateF(p.birth)+'</p><p><b>Idade:</b> '+escF(p.age!=null?p.age:(typeof calcAgeFromBirth==='function'?calcAgeFromBirth(p.birth):'—'))+'</p><p><b>Sexo:</b> '+escF(p.sex||'—')+'</p><p><b>Unidade:</b> '+escF(p.unit||'—')+'</p><p><b>Nível de apoio:</b> '+escF(p.supportLevel||'—')+'</p>';
+    html+='<p><b>Diagnóstico principal/legado:</b> '+escF(p.diagnosis||'—')+'</p>';
+    html+='<p><b>Todos os diagnósticos:</b> '+escF(diagnoses.length?diagnoses.join(', '):'—')+'</p>';
+    html+='<p><b>Registros de diagnóstico:</b> '+escF(records.length?records.map(x=>typeof x==='object'?text(x):x).join(' | '):'—')+'</p>';
+    html+='<p><b>Deficiência/condição:</b> '+escF(text(p.deficiency))+'</p><p><b>Condições funcionais:</b> '+escF(text(p.functionalConditions))+'</p><p><b>Detalhamento:</b> '+escF(p.diagnosisDetail||'—')+'</p><p><b>Outro diagnóstico:</b> '+escF(p.otherDiagnosis||'—')+'</p><p><b>Observações:</b> '+escF(p.observations||'—')+'</p></div></div>';
+
+    html+=sectionFromObject('TODOS OS DADOS CADASTRADOS DO PACIENTE',p);
+
+    if(m.as.length){
+      html+='<div class="card all-data-card"><h3>AVALIAÇÕES FÍSICAS E FUNCIONAIS — TODAS AS AVALIAÇÕES</h3>';
+      m.as.forEach((a,i)=>{html+='<div class="assessment-block"><h4>Avaliação '+(i+1)+' — '+dateF(a.date)+'</h4>'+sectionFromObject('Dados completos da avaliação',a)+'</div>'});
+      html+='</div>';
+    }else html+='<div class="card"><h3>AVALIAÇÕES</h3><p class="muted">Nenhuma avaliação cadastrada.</p></div>';
+
+    if(m.plan)html+=sectionFromObject('PRESCRIÇÃO ATUAL DE TREINAMENTO',m.plan);
+    if(m.ch.training.length)html+=sectionFromObject('REGISTROS DE TREINAMENTO REALIZADO',{'Registros':m.ch.training});
+    if(m.ch.aerobicLogs.length)html+=sectionFromObject('REGISTROS AERÓBICOS',{'Registros':m.ch.aerobicLogs});
+    if(m.ch.trainingProgressions.length)html+=sectionFromObject('HISTÓRICO DE PROGRESSÕES',{'Registros':m.ch.trainingProgressions});
+    if(m.ch.trainingSchedules.length)html+=sectionFromObject('CRONOGRAMAS DE TREINAMENTO',{'Registros':m.ch.trainingSchedules});
+    if(m.ch.trainingAttendance.length)html+=sectionFromObject('FREQUÊNCIA / PARTICIPAÇÕES',{'Registros':m.ch.trainingAttendance});
+    if(m.ch.trainingCancellations.length)html+=sectionFromObject('CANCELAMENTOS REGISTRADOS',{'Registros':m.ch.trainingCancellations});
+
+    html+='<div class="card"><h3>CONTROLE DO RELATÓRIO</h3><p><b>Data de emissão:</b> '+new Date().toLocaleDateString('pt-BR')+'</p><p>Este relatório apresenta os dados atualmente cadastrados para o paciente na plataforma Moviment’ Up, incluindo registros clínicos, avaliações e treinamento disponíveis no dispositivo.</p></div>';
+    html+='</div>';
+    return html;
+  }
+
+  // RELATÓRIO: substituição somente da apresentação, sem alterar armazenamento/sincronização.
+  window.renderReport=function(){
+    const sel=document.getElementById('rPatient'),el=document.getElementById('reportContent');
+    if(!sel||!el)return;
+    const pid=sel.value||'';
+    if(!pid){el.innerHTML='<div class="notice">Selecione um paciente.</div>';return}
+    try{
+      const m=buildCompleteReport(pid);
+      el.innerHTML=m?reportHTML(m):'<div class="notice danger">Paciente não encontrado.</div>';
+    }catch(e){console.error('Moviment Up — relatório completo:',e);el.innerHTML='<div class="notice danger">Erro ao montar o relatório. Os dados permanecem preservados.</div>'}
+  };
+
+  window.generatePatientPDF=function(){
+    const sel=document.getElementById('rPatient'),pid=sel&&sel.value?sel.value:'';
+    if(!pid){alert('Selecione um paciente antes de imprimir o relatório.');return}
+    const m=buildCompleteReport(pid);
+    if(!m){alert('Paciente não encontrado.');return}
+    renderReport();
+    const source=document.getElementById('reportContent');
+    if(!source)return;
+    const old=document.getElementById('printReportShell');if(old)old.remove();
+    const shell=document.createElement('div');shell.id='printReportShell';
+    shell.innerHTML='<div class="print-report-header"><img class="print-logo" src="logo.png" alt="Casa de David"><div class="print-title"><h1>Moviment’ Up — Treinamento Resistido Inclusivo</h1><div>Casa de David — Tabernáculo Espírita para Excepcionais</div><h2>RELATÓRIO COMPLETO DO PACIENTE</h2><div><b>Paciente:</b> '+escF(m.p.name||'Paciente')+'</div><div><b>Data de emissão:</b> '+new Date().toLocaleDateString('pt-BR')+'</div></div></div>'+source.innerHTML;
+    document.body.appendChild(shell);document.body.classList.add('printing-report');
+    setTimeout(function(){window.print();setTimeout(function(){document.body.classList.remove('printing-report');shell.remove()},900)},150);
+  };
+
+  // ============================================================
+  // TREINAMENTO — ações pós-salvamento
+  // ============================================================
+  async function remoteDelete(table,id){
+    if(!navigator.onLine)return {ok:false,offline:true};
+    if(typeof SUPABASE_URL==='undefined'||typeof SUPABASE_KEY==='undefined')return {ok:false,missing:true};
+    try{
+      const r=await fetch(SUPABASE_URL+'/rest/v1/'+table+'?id=eq.'+encodeURIComponent(String(id)),{method:'DELETE',headers:H});
+      return {ok:r.ok,status:r.status,text:r.ok?'':await r.text().catch(()=> '')};
+    }catch(e){return {ok:false,error:e};}
+  }
+
+  function trainingActionCard(){
+    const info=document.getElementById('trainingPatientInfo');
+    if(!info)return;
+    let card=document.getElementById('savedTrainingActions');
+    const pid=window.currentTrainingPatientId||'';
+    const plan=pid&&typeof getTrainingPlan==='function'?getTrainingPlan(pid):null;
+    if(!plan){if(card)card.remove();return}
+    if(!card){
+      card=document.createElement('div');card.id='savedTrainingActions';card.className='notice';info.insertAdjacentElement('afterend',card);
+    }
+    card.innerHTML='<b>Prescrição atual salva</b><div class="small muted" style="margin-top:4px">Você pode editar exercícios, carga, séries, repetições, regulagens e observações. Ao salvar uma alteração, a versão anterior permanece no histórico.</div><div class="actions" style="margin-top:8px"><button type="button" class="btn" onclick="editSavedTrainingPlan()">✏️ EDITAR PRESCRIÇÃO ATUAL</button><button type="button" class="btn danger" onclick="deleteSavedTrainingPlan()">🗑️ EXCLUIR PRESCRIÇÃO ATUAL</button></div>';
+  }
+
+  window.editSavedTrainingPlan=function(){
+    const pid=document.getElementById('tPatient')?.value||window.currentTrainingPatientId||'';
+    if(!pid)return alert('Selecione um paciente.');
+    const plan=typeof getTrainingPlan==='function'?getTrainingPlan(pid):null;
+    if(!plan)return alert('Este paciente ainda não possui uma prescrição salva.');
+    window.currentTrainingPatientId=pid;window.currentTrainingPlan=cloneObj(plan);window.originalTrainingPlanSnapshot=cloneObj(plan);
+    try{
+      document.getElementById('tProfessor').value=plan.professor||'';
+      document.getElementById('tDate').value=plan.date||'';
+      if(typeof setObjectiveChecks==='function')setObjectiveChecks(plan.objectives||[]);
+      if(typeof fillAerobicForm==='function')fillAerobicForm(plan.aerobic||{});
+      if(typeof renderTrainingDay==='function')renderTrainingDay();
+      const box=document.getElementById('savedTrainingActions');if(box)box.innerHTML='<b>✏️ MODO DE EDIÇÃO ATIVO</b><div class="small">Faça as correções e clique em <b>Salvar / Atualizar prescrição</b>. O sistema substituirá a prescrição atual e preservará a versão anterior no histórico.</div>';
+      document.getElementById('trainingDayContent')?.scrollIntoView({behavior:'smooth',block:'start'});
+    }catch(e){console.error(e);alert('Não foi possível abrir a prescrição para edição. Os dados permanecem preservados.');}
+  };
+
+  window.deleteSavedTrainingPlan=async function(){
+    const pid=document.getElementById('tPatient')?.value||window.currentTrainingPatientId||'';
+    if(!pid)return alert('Selecione um paciente.');
+    const plan=typeof getTrainingPlan==='function'?getTrainingPlan(pid):null;
+    if(!plan)return alert('Não há prescrição salva para excluir.');
+    if(!navigator.onLine){alert('Para excluir uma prescrição salva com segurança, conecte o computador/tablet à internet. O sistema atual de sincronização não possui marcação de exclusão offline. Nenhum dado foi apagado.');return}
+    if(!confirm('EXCLUIR A PRESCRIÇÃO ATUAL deste paciente?\n\nA prescrição será removida do registro atual. O histórico de progressões será preservado.\n\nDeseja continuar?'))return;
+    const remote=await remoteDelete('trainingPlans',plan.id);
+    if(!remote.ok){alert('Não foi possível confirmar a exclusão no Supabase. A prescrição NÃO foi apagada localmente. Verifique a conexão e tente novamente.');return}
+    db.trainingPlans=db.trainingPlans.filter(x=>String(x.id)!==String(plan.id));
+    window.currentTrainingPlan=null;window.originalTrainingPlanSnapshot=null;
+    if(typeof persist==='function')persist();
+    if(typeof loadTrainingPatient==='function')loadTrainingPatient();
+    if(typeof renderTraining==='function')renderTraining();
+    alert('Prescrição atual excluída com sucesso. O histórico de progressões foi preservado.');
+  };
+
+  // Reforça visualmente os botões já existentes de cada exercício.
+  function enhanceExerciseButtons(){
+    const host=document.getElementById('trainingDayContent');if(!host)return;
+    host.querySelectorAll('.exercise-row').forEach(row=>{
+      const acts=row.querySelector('.exercise-head .actions');if(!acts)return;
+      const btns=[...acts.querySelectorAll('button')];
+      btns.forEach(b=>{if(b.textContent.trim()==='Editar')b.title='Editar nome do exercício';if(b.textContent.trim()==='Excluir')b.title='Excluir exercício da prescrição atual';});
+    });
+  }
+
+  const oldLoad=window.loadTrainingPatient;
+  if(typeof oldLoad==='function'&&!window.__finalTrainingLoadWrap){
+    window.__finalTrainingLoadWrap=true;
+    window.loadTrainingPatient=function(){const r=oldLoad.apply(this,arguments);setTimeout(trainingActionCard,0);setTimeout(enhanceExerciseButtons,0);return r};
+  }
+  const oldRenderDay=window.renderTrainingDay;
+  if(typeof oldRenderDay==='function'&&!window.__finalTrainingDayWrap){
+    window.__finalTrainingDayWrap=true;
+    window.renderTrainingDay=function(){const r=oldRenderDay.apply(this,arguments);setTimeout(enhanceExerciseButtons,0);return r};
+  }
+
+  // Garante que, depois de salvar/atualizar a prescrição, os controles continuem visíveis.
+  const oldSavePlan=window.saveTrainingPlan;
+  if(typeof oldSavePlan==='function'&&!window.__finalSavePlanWrap){
+    window.__finalSavePlanWrap=true;
+    window.saveTrainingPlan=function(){
+      const r=oldSavePlan.apply(this,arguments);
+      setTimeout(function(){trainingActionCard();enhanceExerciseButtons()},50);
+      return r;
+    };
+  }
+
+  // Atualiza o relatório se a aba já estiver aberta.
+  document.addEventListener('visibilitychange',function(){if(!document.hidden&&document.getElementById('report')?.classList.contains('active'))setTimeout(renderReport,50)});
+  setTimeout(function(){
+    try{if(document.getElementById('report')?.classList.contains('active'))renderReport()}catch(e){}
+    try{trainingActionCard();enhanceExerciseButtons()}catch(e){}
+  },300);
+})();
+</script>
+
+<style id="moviment-up-final-controlled-fix-style">
+/* Somente estilos necessários para os novos controles/relatório. */
+#savedTrainingActions .actions{display:flex;gap:8px;flex-wrap:wrap}
+#savedTrainingActions .btn.danger{background:#b42318;color:#fff;border-color:#b42318}
+.all-data-card{margin-top:14px}
+.all-data-table{width:100%;border-collapse:collapse}
+.all-data-table th,.all-data-table td{border:1px solid #cfd5da;padding:6px;vertical-align:top;text-align:left}
+.all-data-table th{width:27%;font-weight:700}
+.all-data-list{display:flex;flex-direction:column;gap:5px}
+.all-data-item{padding:5px;border:1px solid #e2e6e9;border-radius:5px}
+.assessment-block{margin:12px 0;padding:8px;border:1px solid #dfe4e8;border-radius:8px}
+.assessment-block .all-data-card{margin-top:8px}
+@media print{
+  #printReportShell{display:none}
+  body.printing-report> *:not(#printReportShell){display:none!important}
+  body.printing-report{margin:0!important;background:#fff!important}
+  body.printing-report #printReportShell{display:block!important;font-family:Arial,Helvetica,sans-serif;color:#111;font-size:11px;padding:10mm}
+  #printReportShell h1{font-size:20px;margin:0 0 3px}
+  #printReportShell h2{font-size:17px;margin:14px 0 7px}
+  #printReportShell h3{font-size:14px;margin:12px 0 6px;border-bottom:1px solid #aaa;padding-bottom:3px}
+  #printReportShell h4{font-size:12px;margin:9px 0 5px}
+  #printReportShell p{margin:3px 0;line-height:1.35}
+  #printReportShell table{width:100%;border-collapse:collapse;margin:5px 0 9px;page-break-inside:auto}
+  #printReportShell th,#printReportShell td{border:1px solid #999;padding:4px;vertical-align:top;text-align:left;word-break:break-word}
+  #printReportShell th{background:#f2f3f4}
+  #printReportShell tr{page-break-inside:avoid}
+  #printReportShell .card{box-shadow:none;border:0;margin:0 0 8px;padding:0}
+  #printReportShell .print-report-header{border-bottom:2px solid #075fc7;padding-bottom:8px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start}
+  #printReportShell .print-logo{width:65px;height:65px;object-fit:contain}
+  #printReportShell .print-title h1{color:#0753aa}
+  #printReportShell .all-data-list{gap:3px}
+  #printReportShell .all-data-item{border:0;border-bottom:1px dotted #bbb;border-radius:0;padding:2px}
+  #printReportShell .assessment-block{page-break-inside:avoid;border:0;padding:0}
+}
+</style>
+
 <script src="pwa-bridge.js"></script>
 </body>
 </html>
