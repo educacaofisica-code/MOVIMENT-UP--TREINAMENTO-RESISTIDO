@@ -5790,67 +5790,65 @@ setTimeout(render,200);setTimeout(render,800);
   }
 
   window.generateTrainingHistoryPDF=function(pid){
-    const p=hPatient(pid), logs=hLogs(pid), plan=hPlan(pid);
+    const p=hPatient(pid);
     if(!p){alert('Paciente não encontrado.');return;}
     const old=document.getElementById('trainingHistoryPrintShell');
     if(old)old.remove();
 
-    let body=`<div class="brand"><img src="logo.png" alt="Casa de David"><div><h1>Histórico de Treinos</h1><div class="subtitle">Moviment' Up — Treinamento Resistido Inclusivo</div></div></div>
-      <div class="patient"><b>Paciente:</b> ${hEsc(p.name||'—')} &nbsp; <b>Data de emissão:</b> ${new Date().toLocaleDateString('pt-BR')}</div>`;
+    /*
+      REGRA PRINCIPAL DO PDF:
+      reproduzir o conteúdo que está efetivamente visível na aba
+      Histórico / Evolução. Isso evita divergência entre a tela e o PDF,
+      especialmente na prescrição de musculação.
+      A sincronização não é alterada por esta rotina.
+    */
+    let historyHtml='';
+    const historyCard=document.querySelector('#historyContent .history-tools');
+    if(historyCard){
+      const clone=historyCard.cloneNode(true);
+      clone.querySelectorAll('.actions,button,#historyTrainingEdit').forEach(el=>el.remove());
+      clone.querySelectorAll('hr').forEach(el=>el.remove());
+      historyHtml=clone.innerHTML;
+    }
 
-    /* PRESCRIÇÃO DE MUSCULAÇÃO: reproduz no PDF o mesmo conteúdo exibido no Histórico/Evolução. */
-    body+=`<h2>Treinamento de musculação — prescrição atual</h2>`;
-    if(plan){
-      const meta=[];
-      if(plan.date)meta.push(`<b>Data da prescrição:</b> ${hDate(plan.date)}`);
-      if(plan.professor)meta.push(`<b>Professor:</b> ${hEsc(plan.professor)}`);
-      if(meta.length)body+=`<div class="plan-meta">${meta.join(' &nbsp; | &nbsp; ')}</div>`;
-      if(Array.isArray(plan.objectives)&&plan.objectives.length){
-        body+=`<p><b>Objetivos:</b> ${hEsc(plan.objectives.join(', '))}</p>`;
-      }
-      let hasStrengthPlan=false;
-      ['A','B','C','D','E'].forEach(day=>{
-        const exs=plan.strength?.[day]||[];
-        if(!exs.length)return;
-        hasStrengthPlan=true;
-        body+=`<div class="training-day"><h3>Treino ${day}</h3><table class="strength-plan-table"><thead><tr><th>Exercício</th><th>Descrição / observação técnica</th><th>Carga</th><th>Séries</th><th>Repetições</th><th>Intervalo</th><th>Regulação</th></tr></thead><tbody>`;
-        exs.forEach(ex=>{
-          const desc=ex.description||ex.exerciseDescription||ex.descricao||'';
-          const regs=[];
-          ['A','F','D','E','B'].forEach(k=>{const v=ex.reg?.[k];if(v!==''&&v!=null)regs.push(k+': '+v)});
-          body+=`<tr><td><b>${hEsc(ex.name||'Exercício')}</b></td><td>${hEsc(desc||ex.obs||'—')}</td><td>${hNum(ex.load)||'—'}</td><td>${hNum(ex.sets)||'—'}</td><td>${hNum(ex.reps)||'—'}</td><td>${hNum(ex.interval)||'—'}</td><td>${hEsc(regs.join(' | ')||'—')}</td></tr>`;
+    /* Fallback: se a aba Histórico ainda não estiver renderizada,
+       usa os mesmos dados da prescrição armazenados na plataforma. */
+    if(!historyHtml){
+      const plan=hPlan(pid);
+      let fallback=`<h2>Treinamento de musculação — prescrição atual</h2>`;
+      if(plan){
+        const meta=[];
+        if(plan.date)meta.push(`<b>Data da prescrição:</b> ${hDate(plan.date)}`);
+        if(plan.professor)meta.push(`<b>Professor:</b> ${hEsc(plan.professor)}`);
+        if(meta.length)fallback+=`<div class="plan-meta">${meta.join(' &nbsp; | &nbsp; ')}</div>`;
+        if(Array.isArray(plan.objectives)&&plan.objectives.length)fallback+=`<p><b>Objetivos:</b> ${hEsc(plan.objectives.join(', '))}</p>`;
+        let found=false;
+        ['A','B','C','D','E'].forEach(day=>{
+          const exs=plan.strength?.[day]||[];
+          if(!exs.length)return;
+          found=true;
+          fallback+=`<div class="training-day"><h3>Treino ${day}</h3><table class="strength-plan-table"><thead><tr><th>Exercício</th><th>Descrição / observação técnica</th><th>Carga</th><th>Séries</th><th>Repetições</th><th>Intervalo</th><th>Regulação</th></tr></thead><tbody>`;
+          exs.forEach(ex=>{
+            const desc=ex.description||ex.exerciseDescription||ex.descricao||ex.obs||'';
+            const regs=[];
+            ['A','F','D','E','B'].forEach(k=>{const v=ex.reg?.[k];if(v!==''&&v!=null)regs.push(k+': '+v)});
+            fallback+=`<tr><td><b>${hEsc(ex.name||'Exercício')}</b></td><td>${hEsc(desc||'—')}</td><td>${hNum(ex.load)||'—'}</td><td>${hNum(ex.sets)||'—'}</td><td>${hNum(ex.reps)||'—'}</td><td>${hNum(ex.interval)||'—'}</td><td>${hEsc(regs.join(' | ')||'—')}</td></tr>`;
+          });
+          fallback+='</tbody></table></div>';
         });
-        body+='</tbody></table></div>';
-      });
-      if(!hasStrengthPlan)body+='<p class="muted">Nenhum treino de musculação prescrito.</p>';
-    }else{
-      body+='<p class="muted">Nenhuma prescrição de musculação registrada para este paciente.</p>';
+        if(!found)fallback+='<p class="muted">Nenhum treino de musculação prescrito.</p>';
+      }else fallback+='<p class="muted">Nenhuma prescrição de musculação registrada para este paciente.</p>';
+      historyHtml=fallback;
     }
-
-    /* TREINOS DIÁRIOS DE MUSCULAÇÃO: somente registros efetivamente realizados. */
-    body+=`<h2>Treinos diários de musculação — realizados</h2>${historyLogRows(logs,'strength')}`;
-
-    /* PRESCRIÇÃO AERÓBICA, quando existir, permanece separada dos registros diários. */
-    if(plan?.aerobic){
-      const a=plan.aerobic||{};
-      const aerobicRows=[
-        ['Modalidade',a.modality],['Frequência semanal',a.frequency],['Duração (min)',a.duration],['Intensidade',a.intensity],
-        ['Objetivo',a.objective],['FC-alvo',a.fcTarget],['FC máxima',a.fcMax],['FC repouso',a.fcRest],
-        ['FC de reserva',a.fcReserve],['Velocidade (km/h)',a.speed],['Distância (km)',a.distance],['Carga / resistência',a.resistance],['Nível',a.level],['Observações',a.obs]
-      ].filter(r=>r[1]!==null&&r[1]!==undefined&&r[1]!=='');
-      if(aerobicRows.length){
-        body+=`<h2>Treinamento aeróbico — prescrição atual</h2><table class="aerobic-plan-table">${aerobicRows.map(r=>`<tr><th>${hEsc(r[0])}</th><td>${hEsc(r[1])}</td></tr>`).join('')}</table>`;
-      }
-    }
-
-    body+=`<h2>Treinos aeróbicos — registros diários</h2>${historyLogRows(logs,'aerobic')}`;
-    const other=logs.filter(l=>trainingHistoryKind(l)==='other');
-    if(other.length)body+=`<h2>Outros registros de treinamento</h2>${historyLogRows(logs,'other')}`;
-    if(!logs.length && !plan)body+='<p>Nenhum treino ou prescrição de treinamento registrado para este paciente.</p>';
 
     const shell=document.createElement('div');
     shell.id='trainingHistoryPrintShell';
-    shell.innerHTML=`<div class="training-history-print">${body}<div class="footer">Relatório gerado a partir do histórico de treinos registrados na plataforma Moviment' Up.</div></div>`;
+    shell.innerHTML=`<div class="training-history-print">
+      <div class="brand"><img src="logo.png" alt="Casa de David"><div><h1>Histórico de Treinos</h1><div class="subtitle">Moviment' Up — Treinamento Resistido Inclusivo</div></div></div>
+      <div class="patient"><b>Paciente:</b> ${hEsc(p.name||'—')} &nbsp; <b>Data de emissão:</b> ${new Date().toLocaleDateString('pt-BR')}</div>
+      ${historyHtml}
+      <div class="footer">Relatório gerado a partir do histórico de treinos registrados na plataforma Moviment' Up.</div>
+    </div>`;
     document.body.appendChild(shell);
     document.body.classList.add('printing-training-history');
 
@@ -5862,7 +5860,6 @@ setTimeout(render,200);setTimeout(render,800);
       },900);
     },150);
   };
-
   window.printHistoryTraining=function(pid){
     window.generateTrainingHistoryPDF(pid);
   };
