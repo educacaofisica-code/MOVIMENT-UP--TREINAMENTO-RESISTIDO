@@ -5876,5 +5876,102 @@ setTimeout(render,200);setTimeout(render,800);
 </style>
 
 <script src="pwa-bridge.js"></script>
+
+<script id="moviment-up-v9-3-delete-tombstone">
+/* V9.3 — CORREÇÃO EXCLUSIVA: exclusão de paciente sem retorno pela sincronização.
+   A sincronização existente da V9 é preservada. O paciente recebe um tombstone
+   (deleted/deletedAt), é ocultado da interface e a marca de exclusão é enviada
+   pelo mesmo mecanismo de sincronização já existente. */
+(function(){
+  const getDBx=()=>{try{return (typeof db!=='undefined')?db:window.db}catch(e){return window.db||null}};
+  const visiblePx=()=>{const d=getDBx();return (d?.patients||[]).filter(p=>p&&!p.deleted&&!p.deletedAt)};
+  const escPx=x=>typeof esc==='function'?esc(x):String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+
+  window.deletePatient=async function(pid){
+    const d=getDBx(); if(!d)return;
+    const p=(d.patients||[]).find(x=>String(x.id)===String(pid)); if(!p)return;
+    if(p.deleted||p.deletedAt)return;
+    const linked=['assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
+    const total=linked.reduce((n,k)=>n+(Array.isArray(d[k])?d[k].filter(x=>String(x.patientId)===String(pid)).length:0),0);
+    if(!confirm(`APAGAR CADASTRO?\n\nPaciente: ${p.name}\n\nSerão excluídos o cadastro e ${total} registro(s) vinculado(s).\n\nEsta ação não pode ser desfeita.`))return;
+    if(!confirm(`Confirma definitivamente a exclusão de ${p.name}?`))return;
+
+    /* Tombstone: NÃO remover o paciente do array local. Isso é essencial para
+       que o sync saiba que houve uma exclusão e não recrie o cadastro remoto. */
+    const t=new Date().toISOString();
+    p.deleted=true; p.deletedAt=t; p.updatedAt=t;
+    if(!p.createdAt)p.createdAt=t;
+
+    /* Remove os vínculos localmente para que o histórico deixe de aparecer,
+       mas mantém o paciente marcado como excluído para o sincronizador. */
+    linked.forEach(k=>{if(Array.isArray(d[k]))d[k]=d[k].filter(x=>String(x.patientId)!==String(pid));});
+
+    try{localStorage.setItem('casa_david_moviment_up_v1',JSON.stringify(d));}
+    catch(e){alert('Não foi possível salvar a exclusão no navegador. Tente novamente.');return;}
+
+    ['tPatient','sPatient','aPatient','hPatient','rPatient'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
+    try{if(typeof populateSelects==='function')populateSelects()}catch(e){}
+    try{if(typeof renderPatients==='function')renderPatients()}catch(e){}
+    try{if(typeof updateCounts==='function')updateCounts()}catch(e){}
+    try{if(typeof renderHistory==='function')renderHistory()}catch(e){}
+    try{if(typeof renderTraining==='function')renderTraining()}catch(e){}
+    try{if(typeof renderSuggestionTab==='function')renderSuggestionTab()}catch(e){}
+
+    /* Força o ciclo normal de sincronização a enxergar a alteração. */
+    try{
+      if(typeof window.syncNow==='function') await window.syncNow('exclusão de cadastro');
+    }catch(e){console.warn('V9.3: sincronização após exclusão',e)}
+
+    window.__movimentUpSetStatus?.('online','ONLINE • cadastro excluído');
+    alert(`Cadastro de ${p.name} apagado com sucesso.\n\nA exclusão foi registrada e será sincronizada com o outro dispositivo.`);
+  };
+
+  /* Oculta pacientes excluídos em todas as listas principais sem alterar a
+     estrutura da sincronização. */
+  const oldPatientOptions=window.patientOptions;
+  if(typeof oldPatientOptions==='function'){
+    window.patientOptions=function(selectId){
+      const el=document.getElementById(selectId); if(!el)return;
+      const d=getDBx();
+      el.innerHTML='<option value="">Selecione</option>'+visiblePx().map(p=>`<option value="${escPx(p.id)}">${escPx(p.name)}</option>`).join('');
+    };
+  }
+
+  const oldPopulate=window.populateSelects;
+  if(typeof oldPopulate==='function'){
+    window.populateSelects=function(){
+      try{['aPatient','hPatient','tPatient','rPatient'].forEach(id=>window.patientOptions?.(id))}catch(e){}
+      try{renderPatients?.()}catch(e){}
+      try{renderTraining?.()}catch(e){}
+      try{updateCounts?.()}catch(e){}
+      try{updatePatientNameSearch?.()}catch(e){}
+    };
+  }
+
+  const oldUpdateCounts=window.updateCounts;
+  if(typeof oldUpdateCounts==='function'){
+    window.updateCounts=function(){
+      const d=getDBx(); if(!d)return;
+      const kp=document.getElementById('kPatients'); if(kp)kp.textContent=visiblePx().length;
+      const ka=document.getElementById('kAssess'); if(ka)ka.textContent=(d.assessments||[]).filter(a=>visiblePx().some(p=>String(p.id)===String(a.patientId))).length;
+      const kt=document.getElementById('kTrain'); if(kt)kt.textContent=(d.training||[]).filter(a=>visiblePx().some(p=>String(p.id)===String(a.patientId))).length;
+    };
+  }
+
+  /* Fallback para a tabela de pacientes, sempre excluindo tombstones. */
+  window.renderPatients=function(){
+    const el=document.getElementById('patientTable'); if(!el)return;
+    const arr=visiblePx();
+    if(!arr.length){el.innerHTML='<p class="muted">Nenhum paciente cadastrado.</p>';return;}
+    el.innerHTML='<table><tr><th>Paciente</th><th>Unidade</th><th>Condição funcional</th><th>Diagnósticos / saúde</th><th>Ações</th></tr>'+arr.map(p=>{
+      const c=typeof normalizePatientClinical==='function'?normalizePatientClinical(p):{functional:[],diagnoses:[]};
+      const as=typeof assessmentsFor==='function'?assessmentsFor(p.id):[];
+      const funcs=(c.functional||[]).map(x=>x.name+(x.classification?' — '+x.classification:''));
+      const diags=(c.diagnoses||[]).map(x=>x.name+(x.classification?' — '+x.classification:''));
+      return `<tr><td><b>${escPx(p.name)}</b><br><span class="small muted">${p.age!=null?p.age+' anos':'—'} · ${escPx(p.sex||'—')}</span></td><td>${escPx(p.unit||'—')}</td><td>${escPx(funcs.join('; ')||'—')}</td><td>${escPx(diags.join('; ')||'—')}</td><td><div class="actions" style="margin-top:0;flex-wrap:wrap"><button class="btn" onclick="editPatientClinical('${p.id}')">Editar cadastro</button><button class="btn secondary" onclick="openPatientAssessments('${p.id}')">Abrir avaliação${as.length===1?'':'s'}${as.length?` (${as.length})`:''}</button><button class="btn secondary" onclick="newAssessmentFor('${p.id}')">Nova avaliação</button><button class="btn danger" onclick="deletePatient('${p.id}')">Apagar cadastro</button></div></td></tr>`;
+    }).join('')+'</table>';
+  };
+})();
+</script>
 </body>
 </html>
