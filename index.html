@@ -3028,59 +3028,126 @@ const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(win
   /* --- Patient deletion: remove the patient AND every record linked to the same patientId. --- */
   window.deletePatient=async function(pid){
     const p=(db.patients||[]).find(x=>String(x.id)===String(pid)); if(!p)return;
-    const linkedTables=['assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
-    const total=linkedTables.reduce((n,k)=>n+(Array.isArray(db[k])?db[k].filter(x=>String(x.patientId)===String(pid)).length:0),0);
-    if(!confirm(`APAGAR CADASTRO COMPLETO?\n\nPaciente: ${p.name}\n\nSerão excluídos o cadastro e ${total} registro(s) vinculado(s).\n\nEsta ação NÃO pode ser desfeita.`))return;
-    if(!confirm(`CONFIRMA DEFINITIVAMENTE a exclusão de ${p.name}?`))return;
 
-    /* Mantém um tombstone separado para impedir que outro dispositivo
-       recrie o cadastro durante a sincronização. A estrutura da sincronização
-       existente não é alterada. */
-    const tombKey='casa_david_moviment_up_deleted_patients_v1';
-    let tomb={};
-    try{tomb=JSON.parse(localStorage.getItem(tombKey)||'{}')||{}}catch(e){tomb={}};
-    tomb[String(pid)]={deletedAt:new Date().toISOString(),name:p.name};
+    const linkedTables=[
+      'assessments','training','trainingPlans','trainingProgressions',
+      'trainingSchedules','trainingAttendance','aerobicLogs',
+      'trainingCancellations'
+    ];
 
-    if(!navigator.onLine){
-      alert('Para excluir este cadastro com segurança nos dois dispositivos, conecte-se à internet e tente novamente.');
-      return;
-    }
-    if(typeof SUPABASE_URL==='undefined'||typeof SUPABASE_KEY==='undefined'){
-      alert('Não foi possível acessar o Supabase. O cadastro não foi apagado.');
-      return;
-    }
+    const counts={};
+    linkedTables.forEach(k=>{
+      counts[k]=Array.isArray(db[k])?db[k].filter(x=>String(x.patientId)===String(pid)).length:0;
+    });
+    const total=Object.values(counts).reduce((a,b)=>a+b,0);
 
-    try{
-      const hdr={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
-      for(const table of linkedTables){
-        try{
-          const rr=await fetch(SUPABASE_URL+'/rest/v1/'+table+'?data->>patientId=eq.'+encodeURIComponent(String(pid)),{method:'DELETE',headers:hdr,cache:'no-store'});
-          if(!rr.ok)console.warn('Moviment Up: DELETE vinculado',table,rr.status);
-        }catch(e){console.warn('Moviment Up: DELETE vinculado',table,e)}
+    const msg=`APAGAR CADASTRO COMPLETO?\n\nPaciente: ${p.name}\n\n`+
+      `Esta ação apagará o cadastro do paciente e os registros vinculados a ele`+
+      `${total?` (${total} registros relacionados)`:''}.\n\n`+
+      `Esta ação NÃO pode ser desfeita.`;
+    if(!confirm(msg))return;
+    if(!confirm(`Confirma definitivamente a exclusão de ${p.name}?`))return;
+
+    /*
+     * 1) Primeiro apaga do Supabase, se houver conexão.
+     * 2) Só depois remove localmente.
+     *
+     * Isso é essencial nesta V8 porque syncNow() faz UPSERT dos pacientes
+     * locais. Se o remoto não for apagado primeiro, o próximo ciclo pode
+     * recriar o paciente.
+     */
+    let remoteOk=false;
+    if(navigator.onLine && typeof SUPABASE_URL!=='undefined' && typeof SUPABASE_KEY!=='undefined'){
+      try{
+        const hdr={
+          'apikey':SUPABASE_KEY,
+          'Authorization':'Bearer '+SUPABASE_KEY,
+          'Content-Type':'application/json',
+          'Prefer':'return=minimal'
+        };
+
+        // Exclui os registros dependentes primeiro, quando existirem.
+        for(const table of linkedTables){
+          try{
+            const rr=await fetch(
+              SUPABASE_URL+'/rest/v1/'+table+
+              '?data->>patientId=eq.'+encodeURIComponent(String(pid)),
+              {method:'DELETE',headers:hdr,cache:'no-store'}
+            );
+            if(!rr.ok){
+              // Algumas tabelas podem não existir ou ter estrutura diferente;
+              // não impede a exclusão do paciente principal.
+              console.warn('Moviment Up: DELETE vinculado',table,rr.status);
+            }
+          }catch(e){console.warn('Moviment Up: DELETE vinculado',table,e)}
+        }
+
+        const r=await fetch(
+          SUPABASE_URL+'/rest/v1/patients?id=eq.'+encodeURIComponent(String(pid)),
+          {method:'DELETE',headers:hdr,cache:'no-store'}
+        );
+        if(!r.ok){
+          throw new Error('DELETE patients '+r.status+' '+await r.text().catch(()=>''));
+        }
+
+        // Confirma que a linha realmente não está mais no servidor.
+        const check=await fetch(
+          SUPABASE_URL+'/rest/v1/patients?id=eq.'+encodeURIComponent(String(pid))+'&select=id',
+          {method:'GET',headers:{
+            'apikey':SUPABASE_KEY,
+            'Authorization':'Bearer '+SUPABASE_KEY,
+            'Cache-Control':'no-cache',
+            'Pragma':'no-cache'
+          },cache:'no-store'}
+        );
+        if(check.ok){
+          const rows=await check.json().catch(()=>[]);
+          if(Array.isArray(rows) && rows.length===0) remoteOk=true;
+        }
+      }catch(e){
+        console.error('Moviment Up: exclusão remota falhou',e);
+        alert('Não foi possível confirmar a exclusão no Supabase.\n\nO cadastro NÃO será apagado localmente para evitar que ele volte na sincronização.\n\nVerifique a conexão e tente novamente.');
+        return;
       }
-      const r=await fetch(SUPABASE_URL+'/rest/v1/patients?id=eq.'+encodeURIComponent(String(pid)),{method:'DELETE',headers:hdr,cache:'no-store'});
-      if(!r.ok)throw new Error('DELETE patients '+r.status+' '+await r.text().catch(()=>''));
-      const check=await fetch(SUPABASE_URL+'/rest/v1/patients?id=eq.'+encodeURIComponent(String(pid))+'&select=id',{method:'GET',headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Cache-Control':'no-cache','Pragma':'no-cache'},cache:'no-store'});
-      const rows=check.ok?await check.json().catch(()=>[]):[];
-      if(!Array.isArray(rows)||rows.length!==0)throw new Error('Supabase não confirmou a exclusão');
-
-      /* Só agora remove localmente. */
-      ['patients',...linkedTables].forEach(k=>{
-        if(Array.isArray(db[k]))db[k]=db[k].filter(x=>k==='patients'?String(x.id)!==String(pid):String(x.patientId)!==String(pid));
-      });
-      localStorage.setItem(tombKey,JSON.stringify(tomb));
-      if(typeof currentTrainingPatientId!=='undefined'&&String(currentTrainingPatientId)===String(pid)){currentTrainingPatientId='';currentTrainingPlan=null}
-      if(typeof currentPatientEditId!=='undefined'&&String(currentPatientEditId)===String(pid))currentPatientEditId=null;
-      if(!persist())return;
-      ['tPatient','sPatient','aPatient','hPatient','rPatient'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
-      if(typeof renderPatients==='function')renderPatients();
-      if(typeof renderSuggestionTab==='function')renderSuggestionTab();
-      window.__movimentUpSetStatus?.('online','ONLINE • exclusão sincronizada');
-      alert(`Cadastro de ${p.name} apagado com sucesso.\n\nA exclusão foi confirmada no Supabase e o cadastro não será recriado pela sincronização.`);
-    }catch(e){
-      console.error('Moviment Up: exclusão falhou',e);
-      alert('Não foi possível confirmar a exclusão no Supabase.\n\nO cadastro NÃO foi apagado.\n\nVerifique a internet e tente novamente.');
+    }else{
+      alert('A exclusão do cadastro precisa de conexão com o Supabase para sincronizar com o outro dispositivo.\n\nConecte-se à internet e tente novamente.');
+      return;
     }
+
+    if(!remoteOk){
+      alert('O Supabase não confirmou a exclusão.\n\nO cadastro NÃO foi removido localmente.');
+      return;
+    }
+
+    // Remoção local somente após confirmação remota.
+    const keys=['patients',...linkedTables];
+    keys.forEach(k=>{
+      if(Array.isArray(db[k])){
+        db[k]=db[k].filter(x=>{
+          if(k==='patients') return String(x.id)!==String(pid);
+          return String(x.patientId)!==String(pid);
+        });
+      }
+    });
+
+    if(typeof currentTrainingPatientId!=='undefined' && String(currentTrainingPatientId)===String(pid)){
+      currentTrainingPatientId=''; currentTrainingPlan=null;
+    }
+    if(typeof currentPatientEditId!=='undefined' && String(currentPatientEditId)===String(pid)){
+      currentPatientEditId=null;
+    }
+
+    if(!persist())return;
+
+    ['tPatient','sPatient','aPatient','hPatient','rPatient'].forEach(id=>{
+      if($(id))$(id).value='';
+    });
+
+    if(typeof renderPatients==='function')renderPatients();
+    if(typeof renderSuggestionTab==='function')renderSuggestionTab();
+
+    window.__movimentUpSetStatus?.('online','ONLINE • exclusão sincronizada');
+    alert(`Cadastro de ${p.name} apagado com sucesso.\n\nA exclusão foi confirmada no Supabase e será refletida no outro dispositivo.`);
   };
 
   /* Replace the patient table only to add the complete-delete action. */
