@@ -3033,14 +3033,13 @@ const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(win
     if(!confirm(`APAGAR CADASTRO COMPLETO?\n\nPaciente: ${p.name}\n\nSerão excluídos o cadastro e ${total} registro(s) vinculado(s).\n\nEsta ação NÃO pode ser desfeita.`))return;
     if(!confirm(`CONFIRMA DEFINITIVAMENTE a exclusão de ${p.name}?`))return;
 
-    /* Mantém um tombstone separado para impedir que outro dispositivo
-       recrie o cadastro durante a sincronização. A estrutura da sincronização
-       existente não é alterada. */
-    const tombKey='casa_david_moviment_up_deleted_patients_v1';
-    let tomb={};
-    try{tomb=JSON.parse(localStorage.getItem(tombKey)||'{}')||{}}catch(e){tomb={}};
-    tomb[String(pid)]={deletedAt:new Date().toISOString(),name:p.name};
-
+    /*
+     * CORREÇÃO DEFINITIVA DO RETORNO PELA SINCRONIZAÇÃO:
+     * depois de confirmar, o paciente permanece localmente como TOMBSTONE
+     * (deleted=true). Assim, a sincronização da V9 consegue enviar a
+     * exclusão para o Supabase, em vez de deixar o outro dispositivo
+     * recriá-lo a partir de um cadastro antigo.
+     */
     if(!navigator.onLine){
       alert('Para excluir este cadastro com segurança nos dois dispositivos, conecte-se à internet e tente novamente.');
       return;
@@ -3050,33 +3049,57 @@ const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(win
       return;
     }
 
+    const name=p.name;
     try{
       const hdr={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
+
+      /* Primeiro remove os registros vinculados do servidor. */
       for(const table of linkedTables){
         try{
           const rr=await fetch(SUPABASE_URL+'/rest/v1/'+table+'?data->>patientId=eq.'+encodeURIComponent(String(pid)),{method:'DELETE',headers:hdr,cache:'no-store'});
           if(!rr.ok)console.warn('Moviment Up: DELETE vinculado',table,rr.status);
         }catch(e){console.warn('Moviment Up: DELETE vinculado',table,e)}
       }
+
+      /* Remove a linha antiga do servidor. */
       const r=await fetch(SUPABASE_URL+'/rest/v1/patients?id=eq.'+encodeURIComponent(String(pid)),{method:'DELETE',headers:hdr,cache:'no-store'});
       if(!r.ok)throw new Error('DELETE patients '+r.status+' '+await r.text().catch(()=>''));
+
       const check=await fetch(SUPABASE_URL+'/rest/v1/patients?id=eq.'+encodeURIComponent(String(pid))+'&select=id',{method:'GET',headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Cache-Control':'no-cache','Pragma':'no-cache'},cache:'no-store'});
       const rows=check.ok?await check.json().catch(()=>[]):[];
       if(!Array.isArray(rows)||rows.length!==0)throw new Error('Supabase não confirmou a exclusão');
 
-      /* Só agora remove localmente. */
-      ['patients',...linkedTables].forEach(k=>{
-        if(Array.isArray(db[k]))db[k]=db[k].filter(x=>k==='patients'?String(x.id)!==String(pid):String(x.patientId)!==String(pid));
+      /*
+       * NÃO remover fisicamente o paciente do db local.
+       * Marcá-lo como deleted faz com que stampChangedLocal() detecte a
+       * alteração e upsertPatients() grave o tombstone no Supabase.
+       * Isso impede que o cadastro antigo de outro aparelho volte.
+       */
+      const nowIso=new Date().toISOString();
+      p.deleted=true;
+      p.deletedAt=nowIso;
+      p.updatedAt=nowIso;
+
+      /* Os registros clínicos/treinos vinculados deixam de aparecer localmente. */
+      linkedTables.forEach(k=>{
+        if(Array.isArray(db[k]))db[k]=db[k].filter(x=>String(x.patientId)!==String(pid));
       });
-      localStorage.setItem(tombKey,JSON.stringify(tomb));
+
       if(typeof currentTrainingPatientId!=='undefined'&&String(currentTrainingPatientId)===String(pid)){currentTrainingPatientId='';currentTrainingPlan=null}
       if(typeof currentPatientEditId!=='undefined'&&String(currentPatientEditId)===String(pid))currentPatientEditId=null;
+
+      /* IMPORTANTE: persist(), e não localStorage.setItem direto.
+         O persist original aciona a sincronização já existente da V9. */
       if(!persist())return;
+
       ['tPatient','sPatient','aPatient','hPatient','rPatient'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
       if(typeof renderPatients==='function')renderPatients();
       if(typeof renderSuggestionTab==='function')renderSuggestionTab();
+      if(typeof updateCounts==='function')updateCounts();
+      if(typeof populateSelects==='function')populateSelects();
+
       window.__movimentUpSetStatus?.('online','ONLINE • exclusão sincronizada');
-      alert(`Cadastro de ${p.name} apagado com sucesso.\n\nA exclusão foi confirmada no Supabase e o cadastro não será recriado pela sincronização.`);
+      alert(`Cadastro de ${name} apagado com sucesso.\n\nA exclusão foi registrada e não será recriada pela sincronização.`);
     }catch(e){
       console.error('Moviment Up: exclusão falhou',e);
       alert('Não foi possível confirmar a exclusão no Supabase.\n\nO cadastro NÃO foi apagado.\n\nVerifique a internet e tente novamente.');
@@ -3086,8 +3109,9 @@ const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(win
   /* Replace the patient table only to add the complete-delete action. */
   const renderPatientTable=function(){
     const el=$('patientTable'); if(!el)return;
-    if(!db.patients.length){el.innerHTML='<p class="muted">Nenhum paciente cadastrado.</p>';return;}
-    el.innerHTML='<table><tr><th>Paciente</th><th>Unidade</th><th>Condição funcional</th><th>Diagnósticos / saúde</th><th>Ações</th></tr>'+db.patients.map(p=>{
+    const visiblePatients=(db.patients||[]).filter(p=>!p.deleted);
+    if(!visiblePatients.length){el.innerHTML='<p class="muted">Nenhum paciente cadastrado.</p>';return;}
+    el.innerHTML='<table><tr><th>Paciente</th><th>Unidade</th><th>Condição funcional</th><th>Diagnósticos / saúde</th><th>Ações</th></tr>'+visiblePatients.map(p=>{
       const c=typeof normalizePatientClinical==='function'?normalizePatientClinical(p):{functional:[],diagnoses:[]};
       const as=typeof assessmentsFor==='function'?assessmentsFor(p.id):[];
       const funcs=(c.functional||[]).map(x=>x.name+(x.classification?' — '+x.classification:''));
