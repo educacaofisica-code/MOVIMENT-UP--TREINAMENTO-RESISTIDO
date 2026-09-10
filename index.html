@@ -3027,72 +3027,60 @@ const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(win
 
   /* --- Patient deletion: remove the patient AND every record linked to the same patientId. --- */
   window.deletePatient=async function(pid){
-    const p=(db.patients||[]).find(x=>String(x.id)===String(pid));
-    if(!p)return;
+    const p=(db.patients||[]).find(x=>String(x.id)===String(pid)); if(!p)return;
     const linkedTables=['assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
     const total=linkedTables.reduce((n,k)=>n+(Array.isArray(db[k])?db[k].filter(x=>String(x.patientId)===String(pid)).length:0),0);
-    if(!confirm(`APAGAR CADASTRO?\n\nPaciente: ${p.name}\n\nSerão removidos o cadastro e ${total} registro(s) vinculado(s).\n\nEsta ação não pode ser desfeita.`))return;
-    if(!confirm(`Confirma a exclusão definitiva do cadastro de ${p.name}?`))return;
+    if(!confirm(`APAGAR CADASTRO COMPLETO?\n\nPaciente: ${p.name}\n\nSerão excluídos o cadastro e ${total} registro(s) vinculado(s).\n\nEsta ação NÃO pode ser desfeita.`))return;
+    if(!confirm(`CONFIRMA DEFINITIVAMENTE a exclusão de ${p.name}?`))return;
 
-    /*
-     * CORREÇÃO EXCLUSIVA DA EXCLUSÃO DO CADASTRO.
-     * Primeiro removemos do banco local e atualizamos a interface.
-     * A sincronização existente da V9 permanece intacta.
-     */
-    const keys=['patients',...linkedTables];
-    keys.forEach(k=>{
-      if(!Array.isArray(db[k]))return;
-      db[k]=db[k].filter(x=>k==='patients'
-        ? String(x.id)!==String(pid)
-        : String(x.patientId)!==String(pid));
-    });
+    /* Mantém um tombstone separado para impedir que outro dispositivo
+       recrie o cadastro durante a sincronização. A estrutura da sincronização
+       existente não é alterada. */
+    const tombKey='casa_david_moviment_up_deleted_patients_v1';
+    let tomb={};
+    try{tomb=JSON.parse(localStorage.getItem(tombKey)||'{}')||{}}catch(e){tomb={}};
+    tomb[String(pid)]={deletedAt:new Date().toISOString(),name:p.name};
 
-    if(typeof currentTrainingPatientId!=='undefined' && String(currentTrainingPatientId)===String(pid)){
-      currentTrainingPatientId='';
-      if(typeof currentTrainingPlan!=='undefined')currentTrainingPlan=null;
+    if(!navigator.onLine){
+      alert('Para excluir este cadastro com segurança nos dois dispositivos, conecte-se à internet e tente novamente.');
+      return;
     }
-    if(typeof currentPatientEditId!=='undefined' && String(currentPatientEditId)===String(pid))currentPatientEditId=null;
-    if(typeof currentAssessmentId!=='undefined'){
-      const aPatientId=(typeof aPatient!=='undefined'&&aPatient)?aPatient.value:'';
-      if(String(aPatientId)===String(pid))currentAssessmentId=null;
-    }
-
-    try{localStorage.setItem(LOCAL_KEY,JSON.stringify(db));}
-    catch(e){
-      console.error('Moviment Up: erro ao salvar exclusão local',e);
-      alert('O cadastro foi retirado da tela, mas houve um erro ao salvar a exclusão no navegador. Não feche a página e tente novamente.');
+    if(typeof SUPABASE_URL==='undefined'||typeof SUPABASE_KEY==='undefined'){
+      alert('Não foi possível acessar o Supabase. O cadastro não foi apagado.');
       return;
     }
 
-    /* Apaga também no Supabase quando houver conexão, sem bloquear a exclusão local. */
-    let remoteMessage='';
-    if(navigator.onLine && typeof SUPABASE_URL!=='undefined' && typeof SUPABASE_KEY!=='undefined'){
-      try{
-        const hdr={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
-        for(const table of linkedTables){
-          try{
-            await fetch(SUPABASE_URL+'/rest/v1/'+table+'?data->>patientId=eq.'+encodeURIComponent(String(pid)),{method:'DELETE',headers:hdr,cache:'no-store'});
-          }catch(e){console.warn('Moviment Up: falha ao excluir vinculado',table,e)}
-        }
-        const r=await fetch(SUPABASE_URL+'/rest/v1/patients?id=eq.'+encodeURIComponent(String(pid)),{method:'DELETE',headers:hdr,cache:'no-store'});
-        if(!r.ok)remoteMessage=' O cadastro local foi apagado, mas o Supabase não confirmou a exclusão.';
-      }catch(e){
-        console.warn('Moviment Up: exclusão remota não concluída',e);
-        remoteMessage=' O cadastro local foi apagado, mas a exclusão no Supabase será verificada quando houver conexão.';
+    try{
+      const hdr={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
+      for(const table of linkedTables){
+        try{
+          const rr=await fetch(SUPABASE_URL+'/rest/v1/'+table+'?data->>patientId=eq.'+encodeURIComponent(String(pid)),{method:'DELETE',headers:hdr,cache:'no-store'});
+          if(!rr.ok)console.warn('Moviment Up: DELETE vinculado',table,rr.status);
+        }catch(e){console.warn('Moviment Up: DELETE vinculado',table,e)}
       }
-    }else{
-      remoteMessage=' O cadastro local foi apagado. A exclusão no Supabase será feita quando houver conexão.';
-    }
+      const r=await fetch(SUPABASE_URL+'/rest/v1/patients?id=eq.'+encodeURIComponent(String(pid)),{method:'DELETE',headers:hdr,cache:'no-store'});
+      if(!r.ok)throw new Error('DELETE patients '+r.status+' '+await r.text().catch(()=>''));
+      const check=await fetch(SUPABASE_URL+'/rest/v1/patients?id=eq.'+encodeURIComponent(String(pid))+'&select=id',{method:'GET',headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Cache-Control':'no-cache','Pragma':'no-cache'},cache:'no-store'});
+      const rows=check.ok?await check.json().catch(()=>[]):[];
+      if(!Array.isArray(rows)||rows.length!==0)throw new Error('Supabase não confirmou a exclusão');
 
-    ['tPatient','sPatient','aPatient','hPatient','rPatient'].forEach(id=>{const el=$(id);if(el)el.value=''});
-    try{if(typeof renderPatients==='function')renderPatients()}catch(e){}
-    try{if(typeof populateSelects==='function')populateSelects()}catch(e){}
-    try{if(typeof updateCounts==='function')updateCounts()}catch(e){}
-    try{if(typeof renderHistory==='function')renderHistory()}catch(e){}
-    try{if(typeof renderTraining==='function')renderTraining()}catch(e){}
-    try{if(typeof renderSuggestionTab==='function')renderSuggestionTab()}catch(e){}
-    window.__movimentUpSetStatus?.('online',remoteMessage?'ONLINE • exclusão local realizada':'ONLINE • cadastro excluído');
-    alert(`Cadastro de ${p.name} apagado com sucesso.${remoteMessage?'\n\n'+remoteMessage:''}`);
+      /* Só agora remove localmente. */
+      ['patients',...linkedTables].forEach(k=>{
+        if(Array.isArray(db[k]))db[k]=db[k].filter(x=>k==='patients'?String(x.id)!==String(pid):String(x.patientId)!==String(pid));
+      });
+      localStorage.setItem(tombKey,JSON.stringify(tomb));
+      if(typeof currentTrainingPatientId!=='undefined'&&String(currentTrainingPatientId)===String(pid)){currentTrainingPatientId='';currentTrainingPlan=null}
+      if(typeof currentPatientEditId!=='undefined'&&String(currentPatientEditId)===String(pid))currentPatientEditId=null;
+      if(!persist())return;
+      ['tPatient','sPatient','aPatient','hPatient','rPatient'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
+      if(typeof renderPatients==='function')renderPatients();
+      if(typeof renderSuggestionTab==='function')renderSuggestionTab();
+      window.__movimentUpSetStatus?.('online','ONLINE • exclusão sincronizada');
+      alert(`Cadastro de ${p.name} apagado com sucesso.\n\nA exclusão foi confirmada no Supabase e o cadastro não será recriado pela sincronização.`);
+    }catch(e){
+      console.error('Moviment Up: exclusão falhou',e);
+      alert('Não foi possível confirmar a exclusão no Supabase.\n\nO cadastro NÃO foi apagado.\n\nVerifique a internet e tente novamente.');
+    }
   };
 
   /* Replace the patient table only to add the complete-delete action. */
@@ -5876,102 +5864,5 @@ setTimeout(render,200);setTimeout(render,800);
 </style>
 
 <script src="pwa-bridge.js"></script>
-
-<script id="moviment-up-v9-3-delete-tombstone">
-/* V9.3 — CORREÇÃO EXCLUSIVA: exclusão de paciente sem retorno pela sincronização.
-   A sincronização existente da V9 é preservada. O paciente recebe um tombstone
-   (deleted/deletedAt), é ocultado da interface e a marca de exclusão é enviada
-   pelo mesmo mecanismo de sincronização já existente. */
-(function(){
-  const getDBx=()=>{try{return (typeof db!=='undefined')?db:window.db}catch(e){return window.db||null}};
-  const visiblePx=()=>{const d=getDBx();return (d?.patients||[]).filter(p=>p&&!p.deleted&&!p.deletedAt)};
-  const escPx=x=>typeof esc==='function'?esc(x):String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-
-  window.deletePatient=async function(pid){
-    const d=getDBx(); if(!d)return;
-    const p=(d.patients||[]).find(x=>String(x.id)===String(pid)); if(!p)return;
-    if(p.deleted||p.deletedAt)return;
-    const linked=['assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
-    const total=linked.reduce((n,k)=>n+(Array.isArray(d[k])?d[k].filter(x=>String(x.patientId)===String(pid)).length:0),0);
-    if(!confirm(`APAGAR CADASTRO?\n\nPaciente: ${p.name}\n\nSerão excluídos o cadastro e ${total} registro(s) vinculado(s).\n\nEsta ação não pode ser desfeita.`))return;
-    if(!confirm(`Confirma definitivamente a exclusão de ${p.name}?`))return;
-
-    /* Tombstone: NÃO remover o paciente do array local. Isso é essencial para
-       que o sync saiba que houve uma exclusão e não recrie o cadastro remoto. */
-    const t=new Date().toISOString();
-    p.deleted=true; p.deletedAt=t; p.updatedAt=t;
-    if(!p.createdAt)p.createdAt=t;
-
-    /* Remove os vínculos localmente para que o histórico deixe de aparecer,
-       mas mantém o paciente marcado como excluído para o sincronizador. */
-    linked.forEach(k=>{if(Array.isArray(d[k]))d[k]=d[k].filter(x=>String(x.patientId)!==String(pid));});
-
-    try{localStorage.setItem('casa_david_moviment_up_v1',JSON.stringify(d));}
-    catch(e){alert('Não foi possível salvar a exclusão no navegador. Tente novamente.');return;}
-
-    ['tPatient','sPatient','aPatient','hPatient','rPatient'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
-    try{if(typeof populateSelects==='function')populateSelects()}catch(e){}
-    try{if(typeof renderPatients==='function')renderPatients()}catch(e){}
-    try{if(typeof updateCounts==='function')updateCounts()}catch(e){}
-    try{if(typeof renderHistory==='function')renderHistory()}catch(e){}
-    try{if(typeof renderTraining==='function')renderTraining()}catch(e){}
-    try{if(typeof renderSuggestionTab==='function')renderSuggestionTab()}catch(e){}
-
-    /* Força o ciclo normal de sincronização a enxergar a alteração. */
-    try{
-      if(typeof window.syncNow==='function') await window.syncNow('exclusão de cadastro');
-    }catch(e){console.warn('V9.3: sincronização após exclusão',e)}
-
-    window.__movimentUpSetStatus?.('online','ONLINE • cadastro excluído');
-    alert(`Cadastro de ${p.name} apagado com sucesso.\n\nA exclusão foi registrada e será sincronizada com o outro dispositivo.`);
-  };
-
-  /* Oculta pacientes excluídos em todas as listas principais sem alterar a
-     estrutura da sincronização. */
-  const oldPatientOptions=window.patientOptions;
-  if(typeof oldPatientOptions==='function'){
-    window.patientOptions=function(selectId){
-      const el=document.getElementById(selectId); if(!el)return;
-      const d=getDBx();
-      el.innerHTML='<option value="">Selecione</option>'+visiblePx().map(p=>`<option value="${escPx(p.id)}">${escPx(p.name)}</option>`).join('');
-    };
-  }
-
-  const oldPopulate=window.populateSelects;
-  if(typeof oldPopulate==='function'){
-    window.populateSelects=function(){
-      try{['aPatient','hPatient','tPatient','rPatient'].forEach(id=>window.patientOptions?.(id))}catch(e){}
-      try{renderPatients?.()}catch(e){}
-      try{renderTraining?.()}catch(e){}
-      try{updateCounts?.()}catch(e){}
-      try{updatePatientNameSearch?.()}catch(e){}
-    };
-  }
-
-  const oldUpdateCounts=window.updateCounts;
-  if(typeof oldUpdateCounts==='function'){
-    window.updateCounts=function(){
-      const d=getDBx(); if(!d)return;
-      const kp=document.getElementById('kPatients'); if(kp)kp.textContent=visiblePx().length;
-      const ka=document.getElementById('kAssess'); if(ka)ka.textContent=(d.assessments||[]).filter(a=>visiblePx().some(p=>String(p.id)===String(a.patientId))).length;
-      const kt=document.getElementById('kTrain'); if(kt)kt.textContent=(d.training||[]).filter(a=>visiblePx().some(p=>String(p.id)===String(a.patientId))).length;
-    };
-  }
-
-  /* Fallback para a tabela de pacientes, sempre excluindo tombstones. */
-  window.renderPatients=function(){
-    const el=document.getElementById('patientTable'); if(!el)return;
-    const arr=visiblePx();
-    if(!arr.length){el.innerHTML='<p class="muted">Nenhum paciente cadastrado.</p>';return;}
-    el.innerHTML='<table><tr><th>Paciente</th><th>Unidade</th><th>Condição funcional</th><th>Diagnósticos / saúde</th><th>Ações</th></tr>'+arr.map(p=>{
-      const c=typeof normalizePatientClinical==='function'?normalizePatientClinical(p):{functional:[],diagnoses:[]};
-      const as=typeof assessmentsFor==='function'?assessmentsFor(p.id):[];
-      const funcs=(c.functional||[]).map(x=>x.name+(x.classification?' — '+x.classification:''));
-      const diags=(c.diagnoses||[]).map(x=>x.name+(x.classification?' — '+x.classification:''));
-      return `<tr><td><b>${escPx(p.name)}</b><br><span class="small muted">${p.age!=null?p.age+' anos':'—'} · ${escPx(p.sex||'—')}</span></td><td>${escPx(p.unit||'—')}</td><td>${escPx(funcs.join('; ')||'—')}</td><td>${escPx(diags.join('; ')||'—')}</td><td><div class="actions" style="margin-top:0;flex-wrap:wrap"><button class="btn" onclick="editPatientClinical('${p.id}')">Editar cadastro</button><button class="btn secondary" onclick="openPatientAssessments('${p.id}')">Abrir avaliação${as.length===1?'':'s'}${as.length?` (${as.length})`:''}</button><button class="btn secondary" onclick="newAssessmentFor('${p.id}')">Nova avaliação</button><button class="btn danger" onclick="deletePatient('${p.id}')">Apagar cadastro</button></div></td></tr>`;
-    }).join('')+'</table>';
-  };
-})();
-</script>
 </body>
 </html>
