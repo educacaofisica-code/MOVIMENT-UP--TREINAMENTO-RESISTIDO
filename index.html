@@ -4974,11 +4974,9 @@ setTimeout(render,200);setTimeout(render,800);
   window.syncMovimentUpV14=()=>run('manual V14');
   // Removido o intervalo automático de 15s: ele causava re-renderização contínua da interface.
   // A sincronização continua ocorrendo ao abrir, ao voltar à aba e quando a internet é restaurada.
-  window.addEventListener('online',()=>setTimeout(()=>run('internet restaurada V14'),700));
-  document.addEventListener('visibilitychange',()=>{
-    if(!document.hidden && navigator.onLine)setTimeout(()=>run('retorno à plataforma V14'),700);
-  });
-  window.addEventListener('load',()=>setTimeout(()=>run('abertura da plataforma V14'),1200));
+  /* Não registrar listeners adicionais aqui: a rotina principal de sincronização
+     já possui os gatilhos online/visibility/load. Duplicá-los provoca chamadas
+     concorrentes e o efeito de tremor/re-renderização. */
 })();
 </script>
 <script id="moviment-up-final-patient-push">
@@ -5572,7 +5570,7 @@ window.generateTrainingHistoryPDF=function(pid){
     const source=host?.querySelector('.history-training-enhancement-host');
     const html=source?source.innerHTML:block(pid);
     const tmp=document.createElement('div');tmp.innerHTML=html;
-    tmp.querySelectorAll('.actions,#historyTrainingEdit').forEach(x=>x.remove());
+    tmp.querySelectorAll('.actions,#historyTrainingEdit').forEach(x=>x.remove()); tmp.querySelectorAll('.history-training-table tr').forEach(tr=>{if(tr.cells && tr.cells.length) tr.deleteCell(tr.cells.length-1)});
     const old=document.getElementById('trainingHistoryPrintShell');if(old)old.remove();
     const shell=document.createElement('div');shell.id='trainingHistoryPrintShell';
     shell.innerHTML=`<div class="brand"><div><h1>Moviment’ Up — Treinamento Resistido Inclusivo</h1><div class="subtitle">Casa de David — Tabernáculo Espírita para Excepcionais</div><div><b>HISTÓRICO DE TREINAMENTOS</b></div></div></div><div class="patient"><b>Paciente:</b> ${escH(p.name||'—')}<br><b>Unidade:</b> ${escH(p.unit||'—')}</div>${tmp.innerHTML}<div class="footer">Documento gerado a partir do Histórico / Evolução da plataforma Moviment’ Up.</div>`;
