@@ -6028,5 +6028,96 @@ Somente esta sessão será excluída. O paciente, a prescrição e os demais reg
   if(typeof oldGet==='function'){window.getTrainingLogs=function(pid){return oldGet(pid).filter(alive)}}
 
 })();
-</script>\n</body>
+</script>\n
+<script id="moviment-up-final-history-actions-fix">
+(function(){
+  'use strict';
+
+  /* CORREÇÃO FINAL — não reescreve a sincronização. Apenas impede que o
+     renderer de Histórico substitua o formulário enquanto uma edição está aberta,
+     e elimina a duplicação do cartão legado. */
+  const originalRenderHistory = window.renderHistory;
+  window.renderHistory = function(){
+    /* Durante uma edição, NÃO renderizar novamente o histórico. A sincronização
+       pode continuar normalmente, mas não deve fechar o formulário do usuário. */
+    if(window.__movimentUpHistoryEditing) return;
+    if(typeof originalRenderHistory === 'function') originalRenderHistory();
+    setTimeout(function(){
+      if(window.__movimentUpHistoryEditing) return;
+      const pid=document.getElementById('hPatient')?.value||'';
+      const host=document.getElementById('historyContent');
+      if(!host||!pid)return;
+
+      /* Remover qualquer enhancement anterior e substituir o cartão legado,
+         em vez de acrescentar um segundo cartão. */
+      host.querySelectorAll('.history-training-enhancement-host').forEach(el=>el.remove());
+      const legacy=host.querySelector('.history-tools');
+      if(legacy && typeof buildHistoryCard === 'function'){
+        const holder=document.createElement('div');
+        holder.className='history-training-enhancement-host';
+        holder.innerHTML=buildHistoryCard(pid);
+        const replacement=holder.firstElementChild;
+        if(replacement) legacy.replaceWith(replacement);
+      }
+    },0);
+  };
+
+  /* EDITAR AERÓBICO: mantém o formulário aberto durante sincronizações/renderizações. */
+  const oldEditAer=window.editHistoryAerobicLog;
+  if(typeof oldEditAer==='function'){
+    window.editHistoryAerobicLog=function(id){
+      window.__movimentUpHistoryEditing=true;
+      oldEditAer(id);
+    };
+  }
+
+  const oldEditStrength=window.editHistoryTrainingLog;
+  if(typeof oldEditStrength==='function'){
+    window.editHistoryTrainingLog=function(id){
+      window.__movimentUpHistoryEditing=true;
+      oldEditStrength(id);
+    };
+  }
+
+  /* Salvar e cancelar encerram o estado de edição somente depois da ação do usuário. */
+  const oldSaveAer=window.saveHistoryAerobicLog;
+  if(typeof oldSaveAer==='function'){
+    window.saveHistoryAerobicLog=function(id){
+      oldSaveAer(id);
+      window.__movimentUpHistoryEditing=false;
+    };
+  }
+  const oldCancel=window.cancelHistoryTrainingEdit;
+  if(typeof oldCancel==='function'){
+    window.cancelHistoryTrainingEdit=function(){
+      oldCancel();
+      window.__movimentUpHistoryEditing=false;
+    };
+  }
+
+  const oldSaveStrength=window.saveHistoryTrainingLog;
+  if(typeof oldSaveStrength==='function'){
+    window.saveHistoryTrainingLog=function(id){
+      oldSaveStrength(id);
+      window.__movimentUpHistoryEditing=false;
+    };
+  }
+
+  /* Botões de ação nunca devem submeter formulário. */
+  document.addEventListener('click',function(ev){
+    const b=ev.target.closest && ev.target.closest('#historyContent button');
+    if(b) b.setAttribute('type','button');
+  },true);
+
+  /* A seção rosa de evolução/gráficos não é necessária. Ocultar somente o
+     container de métricas do treinamento, sem tocar nas métricas de avaliação
+     ou em qualquer outro módulo. */
+  const style=document.createElement('style');
+  style.id='moviment-up-remove-training-evolution';
+  style.textContent='#trainingMetrics{display:none!important}';
+  document.head.appendChild(style);
+
+})();
+</script>
+</body>
 </html>
