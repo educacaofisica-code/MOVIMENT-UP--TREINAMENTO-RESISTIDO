@@ -5570,7 +5570,13 @@ window.generateTrainingHistoryPDF=function(pid){
     const source=host?.querySelector('.history-training-enhancement-host');
     const html=source?source.innerHTML:block(pid);
     const tmp=document.createElement('div');tmp.innerHTML=html;
-    tmp.querySelectorAll('.actions,#historyTrainingEdit').forEach(x=>x.remove()); tmp.querySelectorAll('.history-training-table tr').forEach(tr=>{if(tr.cells && tr.cells.length) tr.deleteCell(tr.cells.length-1)});
+    tmp.querySelectorAll(".actions,#historyTrainingEdit,button,[onclick*=\"editHistoryTrainingLog\"],[onclick*=\"deleteHistoryTrainingLog\"],[onclick*=\"openHistoryPrescriptionEdit\"],[onclick*=\"printHistoryTraining\"],[onclick*=\"generateTrainingHistoryPDF\"],[onclick*=\"saveHistoryTrainingLog\"],[onclick*=\"cancelHistoryTrainingEdit\"]").forEach(x=>x.remove());
+    tmp.querySelectorAll('table tr').forEach(tr=>{
+      const cells=Array.from(tr.cells||[]);
+      cells.forEach(td=>{if(/\b(Ações|Ação)\b/i.test((td.textContent||'').trim())) td.remove()});
+      const last=tr.cells&&tr.cells[tr.cells.length-1];
+      if(last && /\b(Editar|Excluir|Apagar)\b/i.test((last.textContent||'').trim())) last.remove();
+    });
     const old=document.getElementById('trainingHistoryPrintShell');if(old)old.remove();
     const shell=document.createElement('div');shell.id='trainingHistoryPrintShell';
     shell.innerHTML=`<div class="brand"><div><h1>Moviment’ Up — Treinamento Resistido Inclusivo</h1><div class="subtitle">Casa de David — Tabernáculo Espírita para Excepcionais</div><div><b>HISTÓRICO DE TREINAMENTOS</b></div></div></div><div class="patient"><b>Paciente:</b> ${escH(p.name||'—')}<br><b>Unidade:</b> ${escH(p.unit||'—')}</div>${tmp.innerHTML}<div class="footer">Documento gerado a partir do Histórico / Evolução da plataforma Moviment’ Up.</div>`;
