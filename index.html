@@ -5790,20 +5790,63 @@ setTimeout(render,200);setTimeout(render,800);
   }
 
   window.generateTrainingHistoryPDF=function(pid){
-    const p=hPatient(pid), logs=hLogs(pid);
+    const p=hPatient(pid), logs=hLogs(pid), plan=hPlan(pid);
     if(!p){alert('Paciente não encontrado.');return;}
-    const title=`Histórico de Treinos — ${p.name||'Paciente'}`;
     const old=document.getElementById('trainingHistoryPrintShell');
     if(old)old.remove();
 
     let body=`<div class="brand"><img src="logo.png" alt="Casa de David"><div><h1>Histórico de Treinos</h1><div class="subtitle">Moviment' Up — Treinamento Resistido Inclusivo</div></div></div>
       <div class="patient"><b>Paciente:</b> ${hEsc(p.name||'—')} &nbsp; <b>Data de emissão:</b> ${new Date().toLocaleDateString('pt-BR')}</div>`;
 
-    body+=`<h2>Treinos de musculação</h2>${historyLogRows(logs,'strength')}`;
+    /* PRESCRIÇÃO DE MUSCULAÇÃO: reproduz no PDF o mesmo conteúdo exibido no Histórico/Evolução. */
+    body+=`<h2>Treinamento de musculação — prescrição atual</h2>`;
+    if(plan){
+      const meta=[];
+      if(plan.date)meta.push(`<b>Data da prescrição:</b> ${hDate(plan.date)}`);
+      if(plan.professor)meta.push(`<b>Professor:</b> ${hEsc(plan.professor)}`);
+      if(meta.length)body+=`<div class="plan-meta">${meta.join(' &nbsp; | &nbsp; ')}</div>`;
+      if(Array.isArray(plan.objectives)&&plan.objectives.length){
+        body+=`<p><b>Objetivos:</b> ${hEsc(plan.objectives.join(', '))}</p>`;
+      }
+      let hasStrengthPlan=false;
+      ['A','B','C','D','E'].forEach(day=>{
+        const exs=plan.strength?.[day]||[];
+        if(!exs.length)return;
+        hasStrengthPlan=true;
+        body+=`<div class="training-day"><h3>Treino ${day}</h3><table class="strength-plan-table"><thead><tr><th>Exercício</th><th>Descrição / observação técnica</th><th>Carga</th><th>Séries</th><th>Repetições</th><th>Intervalo</th><th>Regulação</th></tr></thead><tbody>`;
+        exs.forEach(ex=>{
+          const desc=ex.description||ex.exerciseDescription||ex.descricao||'';
+          const regs=[];
+          ['A','F','D','E','B'].forEach(k=>{const v=ex.reg?.[k];if(v!==''&&v!=null)regs.push(k+': '+v)});
+          body+=`<tr><td><b>${hEsc(ex.name||'Exercício')}</b></td><td>${hEsc(desc||ex.obs||'—')}</td><td>${hNum(ex.load)||'—'}</td><td>${hNum(ex.sets)||'—'}</td><td>${hNum(ex.reps)||'—'}</td><td>${hNum(ex.interval)||'—'}</td><td>${hEsc(regs.join(' | ')||'—')}</td></tr>`;
+        });
+        body+='</tbody></table></div>';
+      });
+      if(!hasStrengthPlan)body+='<p class="muted">Nenhum treino de musculação prescrito.</p>';
+    }else{
+      body+='<p class="muted">Nenhuma prescrição de musculação registrada para este paciente.</p>';
+    }
+
+    /* TREINOS DIÁRIOS DE MUSCULAÇÃO: somente registros efetivamente realizados. */
+    body+=`<h2>Treinos diários de musculação — realizados</h2>${historyLogRows(logs,'strength')}`;
+
+    /* PRESCRIÇÃO AERÓBICA, quando existir, permanece separada dos registros diários. */
+    if(plan?.aerobic){
+      const a=plan.aerobic||{};
+      const aerobicRows=[
+        ['Modalidade',a.modality],['Frequência semanal',a.frequency],['Duração (min)',a.duration],['Intensidade',a.intensity],
+        ['Objetivo',a.objective],['FC-alvo',a.fcTarget],['FC máxima',a.fcMax],['FC repouso',a.fcRest],
+        ['FC de reserva',a.fcReserve],['Velocidade (km/h)',a.speed],['Distância (km)',a.distance],['Carga / resistência',a.resistance],['Nível',a.level],['Observações',a.obs]
+      ].filter(r=>r[1]!==null&&r[1]!==undefined&&r[1]!=='');
+      if(aerobicRows.length){
+        body+=`<h2>Treinamento aeróbico — prescrição atual</h2><table class="aerobic-plan-table">${aerobicRows.map(r=>`<tr><th>${hEsc(r[0])}</th><td>${hEsc(r[1])}</td></tr>`).join('')}</table>`;
+      }
+    }
+
     body+=`<h2>Treinos aeróbicos — registros diários</h2>${historyLogRows(logs,'aerobic')}`;
     const other=logs.filter(l=>trainingHistoryKind(l)==='other');
     if(other.length)body+=`<h2>Outros registros de treinamento</h2>${historyLogRows(logs,'other')}`;
-    if(!logs.length)body+='<p>Nenhum treino realizado registrado para este paciente.</p>';
+    if(!logs.length && !plan)body+='<p>Nenhum treino ou prescrição de treinamento registrado para este paciente.</p>';
 
     const shell=document.createElement('div');
     shell.id='trainingHistoryPrintShell';
@@ -5866,6 +5909,15 @@ setTimeout(render,200);setTimeout(render,800);
   #trainingHistoryPrintShell .footer{margin-top:18px;border-top:1px solid #d8dee2;padding-top:7px;color:#66777e;font-size:9px}
 }
 </style>
+<style id="moviment-up-history-training-pdf-musculacao">
+@media print{
+  #trainingHistoryPrintShell .plan-meta{border:1px solid #d8dee2;background:#f7f9fa;border-radius:6px;padding:7px 8px;margin:6px 0 8px}
+  #trainingHistoryPrintShell .training-day{break-inside:avoid;margin-bottom:10px}
+  #trainingHistoryPrintShell .training-day h3{color:#0753aa;font-size:13px;margin:10px 0 5px}
+  #trainingHistoryPrintShell .strength-plan-table th,#trainingHistoryPrintShell .strength-plan-table td{font-size:9.5px;padding:4px 5px}
+  #trainingHistoryPrintShell .strength-plan-table th{background:#eaf4ff}
+  #trainingHistoryPrintShell .aerobic-plan-table th{width:32%;background:#eaf4ff}
+}
 <style id="moviment-up-history-training-style">
 .history-tools{margin-top:14px}
 .history-tools .section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
