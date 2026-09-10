@@ -4577,11 +4577,19 @@ setTimeout(render,200);setTimeout(render,800);
     catch(e){console.error('SYNC: falha ao salvar localmente',e);return false}
   }
   function refresh(){
-    try{if(typeof renderPatients==='function')renderPatients()}catch(e){}
-    try{if(typeof populateSelects==='function')populateSelects()}catch(e){}
+    /* Atualiza somente a tela atualmente aberta. Isso evita que uma
+       sincronização substitua DOM de outras telas e cause piscadas/tremores. */
     try{if(typeof updateCounts==='function')updateCounts()}catch(e){}
-    try{if(!window.__historyEditActive&&typeof renderHistory==='function')renderHistory()}catch(e){}
-    try{if(typeof renderTraining==='function')renderTraining()}catch(e){}
+    try{
+      if(window.__historyEditActive)return;
+      if(document.getElementById('history')?.classList.contains('active')){
+        if(typeof renderHistory==='function')renderHistory();
+      }else if(document.getElementById('training')?.classList.contains('active')){
+        if(typeof renderTraining==='function')renderTraining();
+      }else if(document.getElementById('patients')?.classList.contains('active')){
+        if(typeof renderPatients==='function')renderPatients();
+      }
+    }catch(e){}
   }
   function setStatus(type,text){try{window.__movimentUpSetStatus?.(type,text)}catch(e){}}
   function timeOf(x){
@@ -4897,8 +4905,6 @@ setTimeout(render,200);setTimeout(render,800);
       }
 
       if(remotePatientChanges||remoteAssessments.length)localSave();
-      refresh();
-
       /* Primeira sincronização: os dados remotos acabaram de ser incorporados.
          Não envia os dados locais antigos por cima deles. A partir do próximo
          ciclo, o snapshot identifica somente alterações reais do dispositivo. */
@@ -5559,9 +5565,9 @@ window.openHistoryPrescriptionEdit=function(pid){hOpenTraining(pid)};
 window.generateTrainingHistoryPDF=function(pid){
   try{
     pid=pid||document.getElementById('hPatient')?.value||'';
-    if(!pid){alert('Selecione um paciente antes de gerar o PDF do histórico.');return;}
+    if(!pid){alert('Selecione um paciente antes de gerar o PDF do histórico.');return false;}
     const p=patientH(pid);
-    if(!p){alert('Paciente não encontrado.');return;}
+    if(!p){alert('Paciente não encontrado.');return false;}
     const host=document.getElementById('historyContent');
     const source=host?.querySelector('.history-training-enhancement-host');
     const html=source?source.innerHTML:block(pid);
@@ -5569,17 +5575,19 @@ window.generateTrainingHistoryPDF=function(pid){
     tmp.querySelectorAll('.actions,#historyTrainingEdit').forEach(x=>x.remove());
     const old=document.getElementById('trainingHistoryPrintShell');if(old)old.remove();
     const shell=document.createElement('div');shell.id='trainingHistoryPrintShell';
-    shell.innerHTML=`<div class="brand"><img src="logo.png" alt="Casa de David"><div><h1>Moviment’ Up — Treinamento Resistido Inclusivo</h1><div class="subtitle">Casa de David — Tabernáculo Espírita para Excepcionais</div><div><b>HISTÓRICO DE TREINAMENTOS</b></div></div></div><div class="patient"><b>Paciente:</b> ${escH(p.name||'—')}<br><b>Unidade:</b> ${escH(p.unit||'—')}</div>${tmp.innerHTML}<div class="footer">Documento gerado a partir do Histórico / Evolução da plataforma Moviment’ Up.</div>`;
+    shell.innerHTML=`<div class="brand"><div><h1>Moviment’ Up — Treinamento Resistido Inclusivo</h1><div class="subtitle">Casa de David — Tabernáculo Espírita para Excepcionais</div><div><b>HISTÓRICO DE TREINAMENTOS</b></div></div></div><div class="patient"><b>Paciente:</b> ${escH(p.name||'—')}<br><b>Unidade:</b> ${escH(p.unit||'—')}</div>${tmp.innerHTML}<div class="footer">Documento gerado a partir do Histórico / Evolução da plataforma Moviment’ Up.</div>`;
     document.body.appendChild(shell);
     document.body.classList.add('printing-training-history');
-    setTimeout(()=>{
-      window.print();
-      setTimeout(()=>{document.body.classList.remove('printing-training-history');shell.remove();},700);
-    },100);
-  }catch(e){console.error('PDF histórico:',e);alert('Não foi possível gerar o PDF do histórico.');}
+    /* Chamada síncrona: mantém o gesto do clique e abre imediatamente a
+       janela de impressão, onde o usuário pode escolher "Salvar como PDF". */
+    window.print();
+    document.body.classList.remove('printing-training-history');
+    shell.remove();
+    return true;
+  }catch(e){console.error('PDF histórico:',e);alert('Não foi possível gerar o PDF do histórico. '+(e?.message||''));return false;}
 };
 window.printHistoryTraining=function(pid){window.generateTrainingHistoryPDF(pid)};
-const oldRender=window.renderHistory;window.renderHistory=function(){if(window.__historyEditActive)return;if(typeof oldRender==='function')oldRender();setTimeout(()=>{if(window.__historyEditActive)return;const pid=document.getElementById('hPatient')?.value,host=document.getElementById('historyContent');if(!host||!pid)return;host.querySelectorAll('.history-training-enhancement-host').forEach(x=>x.remove());const d=document.createElement('div');d.className='history-training-enhancement-host';d.innerHTML=block(pid);host.appendChild(d)},0)};
+const oldRender=window.renderHistory;window.renderHistory=function(){if(window.__historyEditActive)return;if(typeof oldRender==='function')oldRender();if(window.__historyEditActive)return;const pid=document.getElementById('hPatient')?.value,host=document.getElementById('historyContent');if(!host||!pid)return;host.querySelectorAll('.history-training-enhancement-host').forEach(x=>x.remove());const d=document.createElement('div');d.className='history-training-enhancement-host';d.innerHTML=block(pid);host.appendChild(d)};
 async function flush(){if(!navigator.onLine)return;for(const item of tombs().slice()){const i=item.indexOf(':');if(i<0)continue;const t=item.slice(0,i),id=item.slice(i+1);try{if(await remoteDelete(t,id)){if(Array.isArray(db[t]))db[t]=db[t].filter(x=>String(x.id)!==String(id));delTomb(t,id)}}catch(e){}}try{persist()}catch(e){}}
 const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window.__historySyncPatchV2){window.__historySyncPatchV2=true;window.syncMovimentUpV10=async r=>{const x=await oldSync(r);await flush();return x}}window.addEventListener('online',()=>setTimeout(flush,1000));
 })();
