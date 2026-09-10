@@ -5931,5 +5931,101 @@ setTimeout(render,200);setTimeout(render,800);
 </style>
 
 <script src="pwa-bridge.js"></script>
+
+<script>
+/* V9.1 — CORREÇÃO EXCLUSIVA DA EXCLUSÃO DE REGISTROS
+   A lógica de sincronização existente NÃO é alterada. */
+(function(){
+  function localPersist(){
+    try{ return typeof persist==='function' ? persist() : false; }catch(e){ console.error(e); return false; }
+  }
+  async function deleteRemote(table,id){
+    if(!navigator.onLine || typeof SUPABASE_URL==='undefined' || typeof SUPABASE_KEY==='undefined') return {ok:false,offline:true};
+    try{
+      const r=await fetch(SUPABASE_URL+'/rest/v1/'+table+'?id=eq.'+encodeURIComponent(String(id)),{
+        method:'DELETE',
+        headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'},
+        cache:'no-store'
+      });
+      return {ok:r.ok,status:r.status,text:r.ok?'':await r.text().catch(()=> '')};
+    }catch(e){return {ok:false,error:e};}
+  }
+  function finishRefresh(){
+    try{ if(typeof v41RenderAll==='function')v41RenderAll(); }catch(e){}
+    try{ if(typeof renderHistory==='function')renderHistory(); }catch(e){}
+    try{ if(typeof renderTraining==='function')renderTraining(); }catch(e){}
+    try{ if(typeof updateCounts==='function')updateCounts(); }catch(e){}
+  }
+
+  /* Avaliação: confirma Supabase antes de apagar localmente. */
+  window.deleteAssessment=async function(id){
+    const a=(db.assessments||[]).find(x=>String(x.id)===String(id)); if(!a)return;
+    const p=(db.patients||[]).find(x=>String(x.id)===String(a.patientId));
+    const label=(typeof formatDate==='function'?formatDate(a.date):a.date)+' — '+(a.professor||'Professor não informado');
+    if(!confirm(`Tem certeza que deseja APAGAR a avaliação de ${p?.name||'este paciente'} em ${label}?\n\nEsta ação não pode ser desfeita.`))return;
+    if(!navigator.onLine){alert('Conecte-se à internet para apagar este registro com segurança e sincronizar a exclusão com o outro dispositivo.\n\nNenhum dado foi apagado.');return;}
+    const remote=await deleteRemote('assessments',a.id);
+    if(!remote.ok){alert('Não foi possível confirmar a exclusão no Supabase.\n\nO registro NÃO foi apagado localmente.\n\nTente novamente com a conexão estável.');return;}
+    db.assessments=db.assessments.filter(x=>String(x.id)!==String(id));
+    if(typeof currentAssessmentId!=='undefined'&&String(currentAssessmentId)===String(id)){currentAssessmentId=null;try{clearAssessment(true)}catch(e){}}
+    localPersist();
+    try{openPatientAssessments(a.patientId)}catch(e){}
+    finishRefresh();
+  };
+
+  /* Frequência. */
+  window.v41DeleteAttendance=async function(id){
+    const x=(db.trainingAttendance||[]).find(v=>String(v.id)===String(id)); if(!x)return;
+    if(!confirm('Apagar este registro de frequência?\n\nEsta ação não pode ser desfeita.'))return;
+    if(!navigator.onLine){alert('Conecte-se à internet para apagar este registro com segurança.\n\nNenhum dado foi apagado.');return;}
+    const remote=await deleteRemote('trainingAttendance',x.id);
+    if(!remote.ok){alert('Não foi possível confirmar a exclusão no Supabase.\n\nO registro NÃO foi apagado localmente.');return;}
+    db.trainingAttendance=db.trainingAttendance.filter(v=>String(v.id)!==String(id));
+    localPersist(); finishRefresh();
+  };
+
+  /* Sessão aeróbica. */
+  window.v41DeleteAerobic=async function(id){
+    const x=(db.aerobicLogs||[]).find(v=>String(v.id)===String(id)); if(!x)return;
+    const d=typeof formatDate==='function'?formatDate(x.date):x.date;
+    if(!confirm('Apagar esta sessão aeróbica de '+d+'?\n\nEsta ação não pode ser desfeita.'))return;
+    if(!navigator.onLine){alert('Conecte-se à internet para apagar este registro com segurança.\n\nNenhum dado foi apagado.');return;}
+    const remote=await deleteRemote('aerobicLogs',x.id);
+    if(!remote.ok){alert('Não foi possível confirmar a exclusão no Supabase.\n\nO registro NÃO foi apagado localmente.');return;}
+    db.aerobicLogs=db.aerobicLogs.filter(v=>String(v.id)!==String(id));
+    localPersist(); finishRefresh();
+  };
+
+  /* Cronograma. */
+  window.v41RemoveSchedule=async function(id){
+    const x=(db.trainingSchedules||[]).find(v=>String(v.id)===String(id)); if(!x)return;
+    if(!confirm('Remover esta atividade do cronograma?\n\nEsta ação não pode ser desfeita.'))return;
+    if(!navigator.onLine){alert('Conecte-se à internet para remover este registro com segurança.\n\nNenhum dado foi apagado.');return;}
+    const remote=await deleteRemote('trainingSchedules',x.id);
+    if(!remote.ok){alert('Não foi possível confirmar a exclusão no Supabase.\n\nO registro NÃO foi apagado localmente.');return;}
+    db.trainingSchedules=db.trainingSchedules.filter(v=>String(v.id)!==String(id));
+    localPersist(); finishRefresh();
+  };
+
+  /* Prescrição atual salva. Preserva o histórico de progressões. */
+  window.deleteSavedTrainingPlan=async function(){
+    const pid=document.getElementById('tPatient')?.value||window.currentTrainingPatientId||'';
+    if(!pid)return alert('Selecione o paciente.');
+    const plan=typeof getTrainingPlan==='function'?getTrainingPlan(pid):null;
+    if(!plan)return alert('Não há prescrição salva para excluir.');
+    if(!confirm('EXCLUIR A PRESCRIÇÃO ATUAL deste paciente?\n\nA prescrição atual será removida. O histórico de progressões será preservado.\n\nDeseja continuar?'))return;
+    if(!navigator.onLine){alert('Conecte-se à internet para excluir a prescrição com segurança e sincronizar a exclusão com o outro dispositivo.\n\nNenhum dado foi apagado.');return;}
+    const remote=await deleteRemote('trainingPlans',plan.id);
+    if(!remote.ok){alert('Não foi possível confirmar a exclusão no Supabase.\n\nA prescrição NÃO foi apagada localmente.\n\nVerifique a conexão e tente novamente.');return;}
+    db.trainingPlans=(db.trainingPlans||[]).filter(x=>String(x.id)!==String(plan.id));
+    window.currentTrainingPlan=null; window.originalTrainingPlanSnapshot=null;
+    localPersist();
+    try{if(typeof loadTrainingPatient==='function')loadTrainingPatient()}catch(e){}
+    finishRefresh();
+    alert('Prescrição atual excluída com sucesso. O histórico de progressões foi preservado.');
+  };
+})();
+</script>
+
 </body>
 </html>
