@@ -4966,7 +4966,8 @@ setTimeout(render,200);setTimeout(render,800);
     }catch(e){console.warn('Moviment Up auto-sync:',e)}
   }
   window.syncMovimentUpV14=()=>run('manual V14');
-  setInterval(()=>run('intervalo automático V14'),15000);
+  // Removido o intervalo automático de 15s: ele causava re-renderização contínua da interface.
+  // A sincronização continua ocorrendo ao abrir, ao voltar à aba e quando a internet é restaurada.
   window.addEventListener('online',()=>setTimeout(()=>run('internet restaurada V14'),700));
   document.addEventListener('visibilitychange',()=>{
     if(!document.hidden && navigator.onLine)setTimeout(()=>run('retorno à plataforma V14'),700);
@@ -5555,7 +5556,29 @@ function block(pid){const plan=planH(pid),logs=logsH(pid),st=logs.filter(l=>l.ki
  h+='<h3>Treinamento Resistido — registros realizados</h3>';if(!st.length)h+='<p class="muted">Nenhum registro de treinamento resistido.</p>';else{h+='<table class="history-training-table"><tr><th>Data</th><th>Treino</th><th>Exercício</th><th>Carga</th><th>Séries</th><th>Reps.</th><th>RPE</th><th>Observações</th><th>Ações</th></tr>';st.forEach(l=>h+=`<tr><td>${dateH(l.date)}</td><td>${escH(l.workout||'—')}</td><td>${escH(l.exercise||'—')}</td><td>${numH(l.loadPerformed)||'—'}</td><td>${numH(l.setsPerformed)||'—'}</td><td>${numH(l.repsPerformed)||'—'}</td><td>${numH(l.rpe)||'—'}</td><td>${escH(l.obs||'—')}</td><td><button type="button" class="btn small" onclick="editHistoryTrainingLog('${escH(l.id)}')">✏️ Editar</button> <button type="button" class="btn small danger" onclick="deleteHistoryTrainingLog('${escH(l.id)}','strength')">🗑️ Excluir</button></td></tr>`);h+='</table>'}
  h+='<h3>Treinamento Aeróbico — registros realizados</h3>';if(!ae.length)h+='<p class="muted">Nenhum registro de treinamento aeróbico.</p>';else{h+='<table class="history-training-table"><tr><th>Data</th><th>Exercício / modalidade</th><th>Tempo</th><th>Distância</th><th>PACE</th><th>Intensidade</th><th>PES</th><th>Participação</th><th>Observação</th><th>Ações</th></tr>';ae.forEach(l=>h+=`<tr><td>${dateH(l.date)}</td><td>${escH(l.modality||l.exercise||'—')}</td><td>${numH(l.duration)||'—'}</td><td>${numH(l.distance)||'—'}</td><td>${escH(l.pace||'—')}</td><td>${escH(l.intensity||'—')}</td><td>${numH(l.rpe)||'—'}</td><td>${escH(l.participation||'PARTICIPOU')}</td><td>${escH(l.obs||'—')}</td><td><button type="button" class="btn small" onclick="editHistoryTrainingLog('${escH(l.id)}')">✏️ Editar</button> <button type="button" class="btn small danger" onclick="deleteHistoryTrainingLog('${escH(l.id)}','aerobic')">🗑️ Excluir</button></td></tr>`);h+='</table>';const yes=ae.filter(x=>String(x.participation||'PARTICIPOU').toUpperCase()!=='NÃO').length;h+=`<p class="small"><b>Adesão/participação aeróbica:</b> ${yes}/${ae.length} sessões (${Math.round(yes/ae.length*100)}%).</p>`}if(pg.length){h+='<h3>Histórico de alterações da prescrição</h3><table><tr><th>Data</th><th>Exercício/Registro</th><th>Tipo</th><th>Professor</th><th>Observação</th></tr>';pg.forEach(x=>h+=`<tr><td>${dateH(x.date)}</td><td>${escH(x.exerciseName||'Plano completo')}</td><td>${escH(x.type||'—')}</td><td>${escH(x.professor||'—')}</td><td>${escH(x.observation||'—')}</td></tr>`);h+='</table>'}return h+'</div>'}
 window.openHistoryPrescriptionEdit=function(pid){hOpenTraining(pid)};
-window.generateTrainingHistoryPDF=window.generateTrainingHistoryPDF||function(){};window.printHistoryTraining=window.printHistoryTraining||function(pid){window.generateTrainingHistoryPDF(pid)};
+window.generateTrainingHistoryPDF=function(pid){
+  try{
+    pid=pid||document.getElementById('hPatient')?.value||'';
+    if(!pid){alert('Selecione um paciente antes de gerar o PDF do histórico.');return;}
+    const p=patientH(pid);
+    if(!p){alert('Paciente não encontrado.');return;}
+    const host=document.getElementById('historyContent');
+    const source=host?.querySelector('.history-training-enhancement-host');
+    const html=source?source.innerHTML:block(pid);
+    const tmp=document.createElement('div');tmp.innerHTML=html;
+    tmp.querySelectorAll('.actions,#historyTrainingEdit').forEach(x=>x.remove());
+    const old=document.getElementById('trainingHistoryPrintShell');if(old)old.remove();
+    const shell=document.createElement('div');shell.id='trainingHistoryPrintShell';
+    shell.innerHTML=`<div class="brand"><img src="logo.png" alt="Casa de David"><div><h1>Moviment’ Up — Treinamento Resistido Inclusivo</h1><div class="subtitle">Casa de David — Tabernáculo Espírita para Excepcionais</div><div><b>HISTÓRICO DE TREINAMENTOS</b></div></div></div><div class="patient"><b>Paciente:</b> ${escH(p.name||'—')}<br><b>Unidade:</b> ${escH(p.unit||'—')}</div>${tmp.innerHTML}<div class="footer">Documento gerado a partir do Histórico / Evolução da plataforma Moviment’ Up.</div>`;
+    document.body.appendChild(shell);
+    document.body.classList.add('printing-training-history');
+    setTimeout(()=>{
+      window.print();
+      setTimeout(()=>{document.body.classList.remove('printing-training-history');shell.remove();},700);
+    },100);
+  }catch(e){console.error('PDF histórico:',e);alert('Não foi possível gerar o PDF do histórico.');}
+};
+window.printHistoryTraining=function(pid){window.generateTrainingHistoryPDF(pid)};
 const oldRender=window.renderHistory;window.renderHistory=function(){if(window.__historyEditActive)return;if(typeof oldRender==='function')oldRender();setTimeout(()=>{if(window.__historyEditActive)return;const pid=document.getElementById('hPatient')?.value,host=document.getElementById('historyContent');if(!host||!pid)return;host.querySelectorAll('.history-training-enhancement-host').forEach(x=>x.remove());const d=document.createElement('div');d.className='history-training-enhancement-host';d.innerHTML=block(pid);host.appendChild(d)},0)};
 async function flush(){if(!navigator.onLine)return;for(const item of tombs().slice()){const i=item.indexOf(':');if(i<0)continue;const t=item.slice(0,i),id=item.slice(i+1);try{if(await remoteDelete(t,id)){if(Array.isArray(db[t]))db[t]=db[t].filter(x=>String(x.id)!==String(id));delTomb(t,id)}}catch(e){}}try{persist()}catch(e){}}
 const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window.__historySyncPatchV2){window.__historySyncPatchV2=true;window.syncMovimentUpV10=async r=>{const x=await oldSync(r);await flush();return x}}window.addEventListener('online',()=>setTimeout(flush,1000));
