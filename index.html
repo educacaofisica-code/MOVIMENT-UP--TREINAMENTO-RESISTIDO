@@ -845,19 +845,6 @@ a:hover{color:#e05288;}
 </div>
 
 <div class="card">
-  <div class="section-head"><h2>Evolução do treinamento</h2><span class="muted small">Primeiro registro × registro atual</span></div>
-  <div id="trainingMetrics"></div>
-  <div class="charts-grid">
-    <div><h3>Distância</h3><canvas id="chartDistance" width="500" height="180"></canvas></div>
-    <div><h3>Velocidade</h3><canvas id="chartSpeed" width="500" height="180"></canvas></div>
-    <div><h3>Pace</h3><canvas id="chartPace" width="500" height="180"></canvas></div>
-    <div><h3>FC média</h3><canvas id="chartFc" width="500" height="180"></canvas></div>
-    <div><h3>Carga</h3><canvas id="chartLoad" width="500" height="180"></canvas></div>
-    <div><h3>Volume</h3><canvas id="chartVolume" width="500" height="180"></canvas></div>
-  </div>
-</div>
-
-<div class="card">
   <div class="section-head"><h2>Histórico de progressão</h2><span id="progressionCount" class="badge">0 registros</span></div>
   <div id="trainingProgressionHistory"></div>
 </div>
@@ -1754,7 +1741,7 @@ function renderTraining(){
 
 
 function renderTrainingReportHTML(pid){
- const plan=getTrainingPlan(pid), logs=getTrainingLogs(pid), aerLogsForReport=(db.aerobicLogs||[]).filter(x=>x.patientId===pid&&!x.deleted);
+ const plan=getTrainingPlan(pid), logs=getTrainingLogs(pid), aerLogsForReport=(db.aerobicLogs||[]).filter(x=>x.patientId===pid);
  if(!plan && !logs.length && !aerLogsForReport.length)return '';
  let block='';
  if(plan){
@@ -2226,7 +2213,7 @@ document.getElementById('patientAssessmentsModal')?.addEventListener('click',e=>
  function iso(d){return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10)}
  function schedules(pid){return db.trainingSchedules.filter(x=>x.patientId===pid)}
  function attend(pid){return db.trainingAttendance.filter(x=>x.patientId===pid)}
- function aLogs(pid){return db.aerobicLogs.filter(x=>x.patientId===pid&&!x.deleted)}
+ function aLogs(pid){return db.aerobicLogs.filter(x=>x.patientId===pid)}
  function dayName(n){return ['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'][Number(n)]||'—'}
  function days(start,end){let out=[],d=new Date(start+'T12:00:00'),z=new Date(end+'T12:00:00');while(d<=z){out.push(iso(d));d.setDate(d.getDate()+1)}return out}
  function plannedOn(pid,date){let dow=new Date(date+'T12:00:00').getDay();return schedules(pid).filter(x=>Number(x.dayOfWeek)===dow&&!x.cancelled)}
@@ -2256,7 +2243,7 @@ document.getElementById('patientAssessmentsModal')?.addEventListener('click',e=>
    </div>
    <div class="card"><div class="section-head"><h2>Registro diário — treinamento aeróbico</h2><span class="muted small">Uma modalidade por sessão.</span></div>
     <div class="grid">
-     <label>Data<input type="date" id="v41AerDate" value="${new Date().toISOString().slice(0,10)}"></label><label>Modalidade<select id="v41AerMod" onchange="v41UpdateAerFC()"><option>Esteira</option><option>Elíptico</option><option>Bicicleta ergométrica</option><option>Funcional MMSS</option><option>Funcional MMII</option><option>Funcional Completo</option><option>Outra</option></select></label><label>Participação<select id="v41AerParticipation"><option value="participou">PARTICIPOU</option><option value="nao_participou">NÃO PARTICIPOU</option></select></label>
+     <label>Data<input type="date" id="v41AerDate" value="${new Date().toISOString().slice(0,10)}"></label><label>Modalidade<select id="v41AerMod" onchange="v41UpdateAerFC()"><option>Esteira</option><option>Elíptico</option><option>Bicicleta ergométrica</option><option>Funcional MMSS</option><option>Funcional MMII</option><option>Funcional Completo</option><option>Outra</option></select></label>
      <label>Objetivo<select id="v41AerObj" onchange="v41UpdateAerFC()"><option>Emagrecimento/controle de peso</option><option>Resistência cardiorrespiratória</option><option>Condicionamento físico</option><option>Manutenção</option></select></label>
      <label>Tempo (min)<input type="number" min="0" step="0.1" id="v41AerDur" oninput="v41AerCalc()"></label><label>Distância (km)<input type="number" min="0" step="0.001" id="v41AerDist" oninput="v41AerCalc()"></label>
      <label>Velocidade média<input id="v41AerSpeed" readonly></label><label>PACE<input id="v41AerPace" readonly></label><label>FC inicial<input type="number" id="v41AerFci"></label><label>FC média<input type="number" id="v41AerFca"></label><label>FC final<input type="number" id="v41AerFcf"></label><label>FC-alvo<input id="v41AerTarget" readonly></label><label>Intensidade 0–10<input type="number" min="0" max="10" step="0.1" id="v41AerRpe"></label><label>Observações<textarea id="v41AerObs"></textarea></label>
@@ -2286,12 +2273,12 @@ document.getElementById('patientAssessmentsModal')?.addEventListener('click',e=>
  window.v41DeleteAttendance=function(id){if(!confirm('Apagar este registro?'))return;db.trainingAttendance=db.trainingAttendance.filter(x=>x.id!==id);persist();v41RenderAll()};
  window.v41UpdateAerFC=function(){if(typeof getCardioTrainingInfo!=='function')return;const info=getCardioTrainingInfo(currentTrainingPatientId),obj=document.getElementById('v41AerObj')?.value,pct=obj==='Emagrecimento/controle de peso'?[.6,.7]:obj==='Resistência cardiorrespiratória'?[.7,.8]:[.6,.8];let t='';if(info&&info.max!=null){let lo,hi;if(info.reserve!=null){lo=Math.round(info.rest+info.reserve*pct[0]);hi=Math.round(info.rest+info.reserve*pct[1])}else{lo=Math.round(info.max*pct[0]);hi=Math.round(info.max*pct[1])}t=lo+'–'+hi+' bpm'}document.getElementById('v41AerTarget').value=t};
  window.v41AerCalc=function(){const d=Number(document.getElementById('v41AerDist').value),m=Number(document.getElementById('v41AerDur').value);document.getElementById('v41AerSpeed').value=d>0&&m>0?(d/(m/60)).toFixed(2):'';document.getElementById('v41AerPace').value=d>0&&m>0&&typeof formatPaceMinutes==='function'?formatPaceMinutes(m/d):''};
- window.v41SaveAerobic=function(){if(!currentTrainingPatientId)return alert('Selecione o paciente.');v41UpdateAerFC();const data={date:document.getElementById('v41AerDate').value||new Date().toISOString().slice(0,10),modality:document.getElementById('v41AerMod').value,objective:document.getElementById('v41AerObj').value,duration:Number(document.getElementById('v41AerDur').value)||null,distance:Number(document.getElementById('v41AerDist').value)||null,speed:Number(document.getElementById('v41AerSpeed').value)||null,pace:document.getElementById('v41AerPace').value,fcInitial:Number(document.getElementById('v41AerFci').value)||null,fcAvg:Number(document.getElementById('v41AerFca').value)||null,fcFinal:Number(document.getElementById('v41AerFcf').value)||null,fcTarget:document.getElementById('v41AerTarget').value,rpe:Number(document.getElementById('v41AerRpe').value)||null,obs:document.getElementById('v41AerObs').value,professor:document.getElementById('tProfessor').value,participation:document.getElementById('v41AerParticipation')?.value||'participou'};db.aerobicLogs.push({id:uid('aer'),patientId:currentTrainingPatientId,...data});persist();v41RenderAll();v41ClearAerForm();};
+ window.v41SaveAerobic=function(){if(!currentTrainingPatientId)return alert('Selecione o paciente.');v41UpdateAerFC();const data={date:document.getElementById('v41AerDate').value||new Date().toISOString().slice(0,10),modality:document.getElementById('v41AerMod').value,objective:document.getElementById('v41AerObj').value,duration:Number(document.getElementById('v41AerDur').value)||null,distance:Number(document.getElementById('v41AerDist').value)||null,speed:Number(document.getElementById('v41AerSpeed').value)||null,pace:document.getElementById('v41AerPace').value,fcInitial:Number(document.getElementById('v41AerFci').value)||null,fcAvg:Number(document.getElementById('v41AerFca').value)||null,fcFinal:Number(document.getElementById('v41AerFcf').value)||null,fcTarget:document.getElementById('v41AerTarget').value,rpe:Number(document.getElementById('v41AerRpe').value)||null,obs:document.getElementById('v41AerObs').value,professor:document.getElementById('tProfessor').value};db.aerobicLogs.push({id:uid('aer'),patientId:currentTrainingPatientId,...data});persist();v41RenderAll();v41ClearAerForm();};
 window.v41ClearAerForm=function(){['v41AerDur','v41AerDist','v41AerFci','v41AerFca','v41AerFcf','v41AerRpe','v41AerObs'].forEach(id=>{const e=document.getElementById(id);if(e)e.value=''});v41AerCalc();};
-window.v41EditAerobic=function(id){const x=db.aerobicLogs.find(v=>v.id===id&&!v.deleted);if(!x)return;document.getElementById('v41AerDate').value=x.date||new Date().toISOString().slice(0,10);document.getElementById('v41AerMod').value=x.modality||'Esteira';document.getElementById('v41AerObj').value=x.objective||'Emagrecimento/controle de peso';document.getElementById('v41AerDur').value=x.duration??'';document.getElementById('v41AerDist').value=x.distance??'';document.getElementById('v41AerFci').value=x.fcInitial??'';document.getElementById('v41AerFca').value=x.fcAvg??'';document.getElementById('v41AerFcf').value=x.fcFinal??'';document.getElementById('v41AerRpe').value=x.rpe??'';document.getElementById('v41AerObs').value=x.obs||'';if(document.getElementById('v41AerParticipation'))document.getElementById('v41AerParticipation').value=x.participation||'participou';v41UpdateAerFC();v41AerCalc();window._v41AerEditingId=id;const b=document.querySelector('#v41FrequencyUI .actions button[onclick="v41SaveAerobic()"]');if(b)b.textContent='Salvar correção da sessão aeróbica';window.scrollTo({top:document.getElementById('v41AerDate').getBoundingClientRect().top+window.scrollY-100,behavior:'smooth'});};
-window.v41DeleteAerobic=function(id){const x=db.aerobicLogs.find(v=>v.id===id&&!v.deleted);if(!x)return;if(!confirm('Apagar esta sessão aeróbica de '+formatDate(x.date)+'? Esta ação não apaga a prescrição nem outros registros.'))return;const t=new Date().toISOString();x.deleted=true;x.deletedAt=t;x.updatedAt=t;persist();v41RenderAll();};
+window.v41EditAerobic=function(id){const x=db.aerobicLogs.find(v=>v.id===id);if(!x)return;document.getElementById('v41AerDate').value=x.date||new Date().toISOString().slice(0,10);document.getElementById('v41AerMod').value=x.modality||'Esteira';document.getElementById('v41AerObj').value=x.objective||'Emagrecimento/controle de peso';document.getElementById('v41AerDur').value=x.duration??'';document.getElementById('v41AerDist').value=x.distance??'';document.getElementById('v41AerFci').value=x.fcInitial??'';document.getElementById('v41AerFca').value=x.fcAvg??'';document.getElementById('v41AerFcf').value=x.fcFinal??'';document.getElementById('v41AerRpe').value=x.rpe??'';document.getElementById('v41AerObs').value=x.obs||'';v41UpdateAerFC();v41AerCalc();window._v41AerEditingId=id;const b=document.querySelector('#v41FrequencyUI .actions button[onclick="v41SaveAerobic()"]');if(b)b.textContent='Salvar correção da sessão aeróbica';window.scrollTo({top:document.getElementById('v41AerDate').getBoundingClientRect().top+window.scrollY-100,behavior:'smooth'});};
+window.v41DeleteAerobic=function(id){const x=db.aerobicLogs.find(v=>v.id===id);if(!x)return;if(!confirm('Apagar esta sessão aeróbica de '+formatDate(x.date)+'? Esta ação não apaga a prescrição nem outros registros.'))return;db.aerobicLogs=db.aerobicLogs.filter(v=>v.id!==id);persist();v41RenderAll();};
 window.v41SaveAerobicOriginal=window.v41SaveAerobic;
-const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(window._v41AerEditingId){const id=window._v41AerEditingId,x=db.aerobicLogs.find(v=>v.id===id&&!v.deleted);if(!x)return;v41UpdateAerFC();Object.assign(x,{date:document.getElementById('v41AerDate').value||new Date().toISOString().slice(0,10),modality:document.getElementById('v41AerMod').value,objective:document.getElementById('v41AerObj').value,duration:Number(document.getElementById('v41AerDur').value)||null,distance:Number(document.getElementById('v41AerDist').value)||null,speed:Number(document.getElementById('v41AerSpeed').value)||null,pace:document.getElementById('v41AerPace').value,fcInitial:Number(document.getElementById('v41AerFci').value)||null,fcAvg:Number(document.getElementById('v41AerFca').value)||null,fcFinal:Number(document.getElementById('v41AerFcf').value)||null,fcTarget:document.getElementById('v41AerTarget').value,rpe:Number(document.getElementById('v41AerRpe').value)||null,obs:document.getElementById('v41AerObs').value,professor:document.getElementById('tProfessor').value,participation:document.getElementById('v41AerParticipation')?.value||'participou'});persist();window._v41AerEditingId=null;const b=document.querySelector('#v41FrequencyUI .actions button[onclick="v41SaveAerobic()"]');if(b)b.textContent='Registrar sessão aeróbica';v41RenderAll();v41ClearAerForm();return}_saveAerobic();};
+const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(window._v41AerEditingId){const id=window._v41AerEditingId,x=db.aerobicLogs.find(v=>v.id===id);if(!x)return;v41UpdateAerFC();Object.assign(x,{date:document.getElementById('v41AerDate').value||new Date().toISOString().slice(0,10),modality:document.getElementById('v41AerMod').value,objective:document.getElementById('v41AerObj').value,duration:Number(document.getElementById('v41AerDur').value)||null,distance:Number(document.getElementById('v41AerDist').value)||null,speed:Number(document.getElementById('v41AerSpeed').value)||null,pace:document.getElementById('v41AerPace').value,fcInitial:Number(document.getElementById('v41AerFci').value)||null,fcAvg:Number(document.getElementById('v41AerFca').value)||null,fcFinal:Number(document.getElementById('v41AerFcf').value)||null,fcTarget:document.getElementById('v41AerTarget').value,rpe:Number(document.getElementById('v41AerRpe').value)||null,obs:document.getElementById('v41AerObs').value,professor:document.getElementById('tProfessor').value});persist();window._v41AerEditingId=null;const b=document.querySelector('#v41FrequencyUI .actions button[onclick="v41SaveAerobic()"]');if(b)b.textContent='Registrar sessão aeróbica';v41RenderAll();v41ClearAerForm();return}_saveAerobic();};
  function v41Calc(start,end){let scheduled=0,part=0,abs=0,details=[];for(const date of days(start,end)){for(const p of plannedOn(currentTrainingPatientId,date)){scheduled++;let rec=p.type==='resistido'?attend(currentTrainingPatientId).find(x=>x.date===date&&x.workout===p.workout):aLogs(currentTrainingPatientId).find(x=>x.date===date&&x.modality===p.modality);if(rec){if(p.type==='resistido'){if(rec.status==='participou')part++;else abs++}else part++;details.push({p,rec,date})}}}return {scheduled,part,abs,details}};
  window.v41RenderMetrics=function(){const el=document.getElementById('v41Metrics');if(!el||!currentTrainingPatientId)return;const d=new Date(),st=document.getElementById('v41Start'),en=document.getElementById('v41End');if(!st.value)st.value=iso(new Date(d.getFullYear(),d.getMonth(),1));if(!en.value)en.value=iso(new Date(d.getFullYear(),d.getMonth()+1,0));const r=v41Calc(st.value,en.value),freq=r.scheduled?r.part/r.scheduled*100:0,absPct=r.scheduled?r.abs/r.scheduled*100:0;const res=r.details.filter(x=>x.p.type==='resistido'),aer=r.details.filter(x=>x.p.type==='aerobico'),resS=res.length,resP=res.filter(x=>x.rec.status==='participou').length,aerS=aer.length,aerP=aer.length,reasons={};res.filter(x=>x.rec.status!=='participou').forEach(x=>reasons[x.rec.reason]=(reasons[x.rec.reason]||0)+1);const cls=freq>=90?'Excelente':freq>=75?'Boa':freq>=60?'Moderada':'Baixa',cl=freq>=90?'freq-excellent':freq>=75?'freq-good':freq>=60?'freq-moderate':'freq-low';el.innerHTML='<div class="freq-kpis"><div class="freq-kpi"><span>Programadas</span><strong>'+r.scheduled+'</strong></div><div class="freq-kpi"><span>Participações</span><strong>'+r.part+'</strong></div><div class="freq-kpi"><span>Ausências</span><strong>'+r.abs+'</strong></div><div class="freq-kpi"><span>Frequência</span><strong>'+freq.toFixed(0)+'%</strong></div><div class="freq-kpi"><span>Ausência</span><strong>'+absPct.toFixed(0)+'%</strong></div></div><p class="freq-status '+cl+'">Frequência '+cls+'</p><h3>Resistido</h3><p>Programadas: '+resS+' | Realizadas: '+resP+' | Ausências: '+(resS-resP)+' | Frequência: '+(resS?(resP/resS*100).toFixed(0):0)+'%</p><p>A: '+res.filter(x=>x.rec.status==='participou'&&x.p.workout==='A').length+' | B: '+res.filter(x=>x.rec.status==='participou'&&x.p.workout==='B').length+' | C: '+res.filter(x=>x.rec.status==='participou'&&x.p.workout==='C').length+' | D: '+res.filter(x=>x.rec.status==='participou'&&x.p.workout==='D').length+' | E: '+res.filter(x=>x.rec.status==='participou'&&x.p.workout==='E').length+'</p><h3>Aeróbico</h3><p>Programadas: '+aerS+' | Realizadas: '+aerP+' | Ausências: 0 | Frequência: '+(aerS?100:0)+'%</p><h3>Motivos das ausências</h3>'+(Object.keys(reasons).length?'<table><tr><th>Motivo</th><th>Quantidade</th><th>% das faltas</th></tr>'+Object.entries(reasons).map(([k,v])=>'<tr><td>'+esc2(k)+'</td><td>'+v+'</td><td>'+((v/r.abs)*100).toFixed(0)+'%</td></tr>').join('')+'</table>':'<p class="muted">Nenhuma ausência registrada no período.</p>')};
  window.v41RenderAll=function(){if(!currentTrainingPatientId)return;const st=document.getElementById('v41ScheduleTable');const ss=schedules(currentTrainingPatientId).sort((a,b)=>Number(a.dayOfWeek)-Number(b.dayOfWeek));st.innerHTML=ss.length?'<table><tr><th>Dia</th><th>Tipo</th><th>Atividade</th><th>Ação</th></tr>'+ss.map(x=>'<tr><td>'+dayName(x.dayOfWeek)+'</td><td>'+ (x.type==='resistido'?'Resistido':'Aeróbico')+'</td><td>'+esc2(x.workout||x.modality)+'</td><td><button class="btn danger" onclick="v41RemoveSchedule(\''+x.id+'\')">Excluir</button></td></tr>').join('')+'</table>':'<p class="muted">Nenhuma atividade programada.</p>';const at=document.getElementById('v41AttTable'),aa=attend(currentTrainingPatientId).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));at.innerHTML=aa.length?'<table><tr><th>Data</th><th>Treino</th><th>Status</th><th>Motivo</th><th>Professor</th><th>Ações</th></tr>'+aa.map(x=>'<tr><td>'+formatDate(x.date)+'</td><td>'+esc2(x.workout)+'</td><td class="'+(x.status==='participou'?'status-e':'status-r')+'">'+(x.status==='participou'?'PARTICIPOU':'NÃO PARTICIPOU — '+(x.reason?'JUSTIFICADA':'NÃO JUSTIFICADA'))+'</td><td>'+esc2(x.reason||'—')+'</td><td>'+esc2(x.professor||'—')+'</td><td><button class="btn secondary" onclick="v41EditAttendance(\''+x.id+'\')">Editar</button><button class="btn danger" onclick="v41DeleteAttendance(\''+x.id+'\')">Apagar</button></td></tr>').join('')+'</table>':'<p class="muted">Nenhum registro de frequência.</p>';const ar=document.getElementById('v41AerTable'),al=aLogs(currentTrainingPatientId).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));ar.innerHTML=al.length?'<table><tr><th>Data</th><th>Modalidade</th><th>Objetivo</th><th>Tempo</th><th>Distância</th><th>FC média</th><th>FC-alvo</th><th>RPE</th><th>Ações</th></tr>'+al.map(x=>'<tr><td>'+formatDate(x.date)+'</td><td>'+esc2(x.modality)+'</td><td>'+esc2(x.objective)+'</td><td>'+ (x.duration??'—')+'</td><td>'+ (x.distance??'—')+'</td><td>'+ (x.fcAvg??'—')+'</td><td>'+esc2(x.fcTarget||'—')+'</td><td>'+ (x.rpe??'—')+'</td><td><button class="btn secondary" onclick="v41EditAerobic(\''+x.id+'\')">Editar</button> <button class="btn danger" onclick="v41DeleteAerobic(\''+x.id+'\')">Apagar</button></td></tr>').join('')+'</table>':'<p class="muted">Nenhuma sessão aeróbica.</p>';v41RenderMetrics();v41UpdateAerFC()};
@@ -2356,7 +2343,7 @@ const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(win
     if(!fcTarget&&fcMax!=null)fcTarget=Math.round(fcMax*.60)+'–'+Math.round(fcMax*.80)+' bpm (60–80% da FC máx.)';
     const plan=typeof getTrainingPlan==='function'?getTrainingPlan(pid):arr(db.trainingPlans).find(x=>x.patientId===pid)||null;
     const trainingLogs=typeof getTrainingLogs==='function'?getTrainingLogs(pid):arr(db.training).filter(x=>x.patientId===pid);
-    const aerLogs=arr(db.aerobicLogs).filter(x=>x&&x.patientId===pid&&!x.deleted).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+    const aerLogs=arr(db.aerobicLogs).filter(x=>x&&x.patientId===pid).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
     const progressions=arr(db.trainingProgressions).filter(x=>x&&x.patientId===pid).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
     let frequency=null;
     try{
@@ -5569,7 +5556,7 @@ setTimeout(render,200);setTimeout(render,800);
     const strength=(db.training||[])
       .filter(x=>String(x.patientId)===String(pid)&&(x.kind==='daily'||x.kind==null));
     const aerobic=(db.aerobicLogs||[])
-      .filter(x=>String(x.patientId)===String(pid)&&!x.deleted)
+      .filter(x=>String(x.patientId)===String(pid))
       .map(x=>Object.assign({kind:'aerobicDaily'},x));
     return strength.concat(aerobic)
       .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
@@ -5664,55 +5651,6 @@ setTimeout(render,200);setTimeout(render,800);
     alert('Treino realizado atualizado com sucesso.');
   };
 
-  function hNumVal(id){const e=document.getElementById(id);if(!e)return null;const v=e.value.trim();return v===''?null:Number(v)}
-  function hVal(id){return document.getElementById(id)?.value??''}
-  function hCalcPace(duration,distance){
-    if(duration==null||distance==null||Number(distance)<=0)return '';
-    const mins=Number(duration),dist=Number(distance);
-    if(!Number.isFinite(mins)||!Number.isFinite(dist)||mins<0)return '';
-    const total=Math.round((mins/dist)*60),mm=Math.floor(total/60),ss=total%60;
-    return mm+':'+String(ss).padStart(2,'0');
-  }
-  window.editHistoryAerobicLog=function(id){
-    const log=(db.aerobicLogs||[]).find(x=>String(x.id)===String(id)&&!x.deleted);if(!log)return;
-    const wrap=document.getElementById('historyTrainingEdit');if(!wrap)return;
-    wrap.innerHTML=`<div class="card history-edit-card">
-      <h3>Editar treino aeróbico realizado</h3>
-      <p class="small muted">A edição atualiza este mesmo registro; o ID original será preservado.</p>
-      <div class="grid history-edit-grid">
-        <label>Data<input id="ha_date" type="date" value="${hEsc(log.date||'')}"></label>
-        <label>Exercício / modalidade<input id="ha_modality" value="${hEsc(log.modality||log.exercise||'')}"></label>
-        <label>Tempo (min)<input id="ha_duration" type="number" min="0" step="any" value="${hNum(log.duration)}"></label>
-        <label>Distância (km)<input id="ha_distance" type="number" min="0" step="any" value="${hNum(log.distance)}"></label>
-        <label>PACE<input id="ha_pace" readonly value="${hEsc(log.pace||'')}"></label>
-        <label>Intensidade<select id="ha_intensity"><option value="">Selecione</option><option ${log.intensity==='Leve'?'selected':''}>Leve</option><option ${log.intensity==='Moderada'?'selected':''}>Moderada</option><option ${log.intensity==='Intensa'?'selected':''}>Intensa</option></select></label>
-        <label>PES (1–10)<input id="ha_rpe" type="number" min="1" max="10" step="1" value="${hNum(log.rpe)}"></label>
-        <label>Participação<select id="ha_participation"><option value="participou" ${(log.participation||'participou')==='participou'?'selected':''}>PARTICIPOU</option><option value="nao_participou" ${(log.participation||'participou')==='nao_participou'?'selected':''}>NÃO PARTICIPOU</option></select></label>
-      </div>
-      <label>Observações<textarea id="ha_obs">${hEsc(log.obs||'')}</textarea></label>
-      <div class="actions"><button class="btn" onclick="saveHistoryAerobicLog('${hEsc(log.id)}')">💾 Salvar alteração</button><button class="btn danger" onclick="deleteHistoryAerobicLog('${hEsc(log.id)}')">🗑️ Excluir registro</button><button class="btn secondary" onclick="cancelHistoryTrainingEdit()">Cancelar</button></div>
-    </div>`;
-    const recalc=()=>{const e=document.getElementById('ha_pace');if(e)e.value=hCalcPace(hNumVal('ha_duration'),hNumVal('ha_distance'))};
-    document.getElementById('ha_duration')?.addEventListener('input',recalc);document.getElementById('ha_distance')?.addEventListener('input',recalc);recalc();
-    wrap.scrollIntoView({behavior:'smooth',block:'center'});
-  };
-  window.saveHistoryAerobicLog=function(id){
-    const log=(db.aerobicLogs||[]).find(x=>String(x.id)===String(id)&&!x.deleted);if(!log)return;
-    const duration=hNumVal('ha_duration'),distance=hNumVal('ha_distance');
-    log.date=hVal('ha_date')||log.date;log.modality=hVal('ha_modality');log.exercise=log.modality;
-    log.duration=duration;log.distance=distance;log.pace=hCalcPace(duration,distance);log.speed=(duration>0&&distance>=0)?Number((distance/(duration/60)).toFixed(3)):null;
-    log.intensity=hVal('ha_intensity');log.rpe=hNumVal('ha_rpe');log.participation=hVal('ha_participation')||'participou';log.obs=hVal('ha_obs');log.updatedAt=new Date().toISOString();
-    try{persist()}catch(e){console.error('Histórico aeróbico: erro ao salvar',e)}
-    cancelHistoryTrainingEdit();if(typeof renderHistory==='function')renderHistory();
-  };
-  window.deleteHistoryAerobicLog=function(id){
-    const log=(db.aerobicLogs||[]).find(x=>String(x.id)===String(id)&&!x.deleted);if(!log)return;
-    if(!confirm('Apagar este registro de treinamento aeróbico de '+hDate(log.date)+'?\n\nEsta ação excluirá somente este registro e não poderá ser desfeita.'))return;
-    const t=new Date().toISOString();log.deleted=true;log.deletedAt=t;log.updatedAt=t;
-    try{persist()}catch(e){console.error('Histórico aeróbico: erro ao excluir',e)}
-    cancelHistoryTrainingEdit();if(typeof renderHistory==='function')renderHistory();
-  };
-
   function historyTrainingBlock(pid){
     const plan=hPlan(pid), logs=hLogs(pid), pg=(db.trainingProgressions||[]).filter(x=>String(x.patientId)===String(pid)).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
     let html=`<div class="card history-tools">
@@ -5753,18 +5691,11 @@ setTimeout(render,200);setTimeout(render,800);
     if(!logs.length){
       html+=`<p class="muted">Nenhum treino diário registrado para este paciente.</p>`;
     }else{
-      html+=`<table class="history-training-table"><tr><th>Data</th><th>Treino</th><th>Exercício/Modalidade</th><th>Carga</th><th>Séries</th><th>Reps.</th><th>Tempo</th><th>Distância</th><th>PACE</th><th>FC média</th><th>RPE</th><th>Participação</th><th>Ações</th></tr>`;
+      html+=`<table class="history-training-table"><tr><th>Data</th><th>Treino</th><th>Exercício/Modalidade</th><th>Carga</th><th>Séries</th><th>Reps.</th><th>Tempo</th><th>Distância</th><th>PACE</th><th>FC média</th><th>RPE</th><th>Ações</th></tr>`;
       logs.forEach(l=>{
-        const isAer=l.kind==='aerobicDaily';
-        if(isAer){
-          html+=`<tr><td>${hDate(l.date)}</td><td>${hEsc(l.workout||'—')}</td><td>${hEsc(l.modality||l.exercise||'—')}</td><td>—</td><td>—</td><td>—</td><td>${hNum(l.duration)||'—'}</td><td>${hNum(l.distance)||'—'}</td><td>${hEsc(l.pace||'—')}</td><td>${hNum(l.fcAvg)||'—'}</td><td>${hNum(l.rpe)||'—'}</td><td>${l.participation==='nao_participou'?'NÃO PARTICIPOU':'PARTICIPOU'}</td><td><button class="btn small" onclick="editHistoryAerobicLog('${hEsc(l.id)}')">✏️ Editar</button> <button class="btn small danger" onclick="deleteHistoryAerobicLog('${hEsc(l.id)}')">🗑️ Excluir</button></td></tr>`;
-        }else{
-          html+=`<tr><td>${hDate(l.date)}</td><td>${hEsc(l.workout||'—')}</td><td>${hEsc(l.exercise||l.modality||'—')}</td><td>${hNum(l.loadPerformed)||'—'}</td><td>${hNum(l.setsPerformed)||'—'}</td><td>${hNum(l.repsPerformed)||'—'}</td><td>${hNum(l.duration)||'—'}</td><td>${hNum(l.distance)||'—'}</td><td>${hEsc(l.pace||'—')}</td><td>${hNum(l.fcAvg)||'—'}</td><td>${hNum(l.rpe)||'—'}</td><td>${l.status==='participou'?'PARTICIPOU':(l.status?'NÃO PARTICIPOU':'—')}</td><td><button class="btn small" onclick="editHistoryTrainingLog('${hEsc(l.id)}')">✏️ Editar</button></td></tr>`;
-        }
+        html+=`<tr><td>${hDate(l.date)}</td><td>${hEsc(l.workout||'—')}</td><td>${hEsc(l.exercise||l.modality||'—')}</td><td>${hNum(l.loadPerformed)||'—'}</td><td>${hNum(l.setsPerformed)||'—'}</td><td>${hNum(l.repsPerformed)||'—'}</td><td>${hNum(l.duration)||'—'}</td><td>${hNum(l.distance)||'—'}</td><td>${hEsc(l.pace||'—')}</td><td>${hNum(l.fcAvg)||'—'}</td><td>${hNum(l.rpe)||'—'}</td><td><button class="btn small" onclick="editHistoryTrainingLog('${hEsc(l.id)}')">✏️ Editar</button></td></tr>`;
       });
       html+='</table>';
-      const aerLogs=logs.filter(l=>l.kind==='aerobicDaily');
-      if(aerLogs.length){const part=aerLogs.filter(l=>l.participation!=='nao_participou').length;html+=`<p class="small"><b>Adesão/participação aeróbica:</b> ${part}/${aerLogs.length} sessões (${((part/aerLogs.length)*100).toFixed(0)}%).</p>`}
     }
 
     if(pg.length){
@@ -5958,5 +5889,144 @@ setTimeout(render,200);setTimeout(render,800);
   }, true);
 })();
 </script>
-</body>
+\n<script id="moviment-up-history-record-actions-v15">
+(function(){
+  'use strict';
+
+  const escH=v=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const numH=v=>v==null||v===''?'':String(v);
+  const dateH=v=>{try{return typeof formatDate==='function'?formatDate(v):new Date(v).toLocaleDateString('pt-BR')}catch(e){return String(v||'—')}};
+  const pidH=()=>document.getElementById('hPatient')?.value||'';
+  const arrH=k=>Array.isArray(db[k])?db[k]:[];
+  const alive=(x)=>x&&!x.deleted;
+
+  /* Keep the existing patient/sync architecture. Child-record deletions are
+     represented as tombstones so the existing patient-bundle synchronization
+     can carry the deletion to the other device without changing its engine. */
+  function touch(x){x.updatedAt=new Date().toISOString();if(!x.createdAt)x.createdAt=x.updatedAt;}
+
+  window.deleteHistoryTrainingLog=function(id){
+    const x=arrH('training').find(v=>String(v.id)===String(id));
+    if(!x)return;
+    if(!confirm('Excluir este registro de treinamento resistido?\
+\
+Somente esta sessão será excluída. O paciente, a prescrição e os demais registros permanecerão.'))return;
+    x.deleted=true; x.deletedAt=new Date().toISOString(); touch(x);
+    try{persist()}catch(e){console.error(e);alert('Não foi possível salvar a exclusão.');return}
+    window.renderHistory?.();
+  };
+
+  window.editHistoryAerobicLog=function(id){
+    const log=arrH('aerobicLogs').find(v=>String(v.id)===String(id));
+    if(!log||log.deleted)return;
+    const wrap=document.getElementById('historyTrainingEdit'); if(!wrap)return;
+    const participation=(log.participation||log.status||'participou').toLowerCase()==='nao'?'nao':'participou';
+    wrap.innerHTML=`<div class="card history-edit-card">
+      <h3>Editar registro de treinamento aeróbico</h3>
+      <div class="grid history-edit-grid">
+        <label>Data<input id="ha_date" type="date" value="${escH(log.date||'')}"></label>
+        <label>Exercício / modalidade<input id="ha_modality" value="${escH(log.modality||log.exercise||'')}"></label>
+        <label>Tempo (min)<input id="ha_duration" type="number" step="any" value="${numH(log.duration)}"></label>
+        <label>Distância (km)<input id="ha_distance" type="number" step="any" value="${numH(log.distance)}"></label>
+        <label>Velocidade (km/h)<input id="ha_speed" type="number" step="any" value="${numH(log.speed)}"></label>
+        <label>PACE<input id="ha_pace" value="${escH(log.pace||'')}" readonly></label>
+        <label>Intensidade<select id="ha_intensity"><option value="">—</option><option value="Leve" ${log.intensity==='Leve'?'selected':''}>Leve</option><option value="Moderada" ${log.intensity==='Moderada'?'selected':''}>Moderada</option><option value="Intensa" ${log.intensity==='Intensa'?'selected':''}>Intensa</option></select></label>
+        <label>PES (1–10)<input id="ha_rpe" type="number" min="1" max="10" step="1" value="${numH(log.rpe)}"></label>
+        <label>Participou<select id="ha_participation"><option value="participou" ${participation==='participou'?'selected':''}>SIM</option><option value="nao" ${participation==='nao'?'selected':''}>NÃO</option></select></label>
+      </div>
+      <label>Observação<textarea id="ha_obs">${escH(log.obs||'')}</textarea></label>
+      <div class="actions"><button class="btn" onclick="saveHistoryAerobicLog('${escH(log.id)}')">💾 Salvar alteração</button><button class="btn secondary" onclick="cancelHistoryTrainingEdit()">Cancelar</button></div>
+    </div>`;
+    const recalc=()=>{
+      const d=Number(document.getElementById('ha_distance')?.value),t=Number(document.getElementById('ha_duration')?.value);
+      const pace=(d>0&&t>0)?(typeof formatPaceMinutes==='function'?formatPaceMinutes(t/d):''):'';
+      const pe=document.getElementById('ha_pace'); if(pe)pe.value=pace;
+      const sp=document.getElementById('ha_speed'); if(sp&&d>0&&t>0)sp.value=(d/(t/60)).toFixed(2);
+    };
+    document.getElementById('ha_distance')?.addEventListener('input',recalc);
+    document.getElementById('ha_duration')?.addEventListener('input',recalc);
+    wrap.scrollIntoView({behavior:'smooth',block:'center'});
+  };
+
+  window.saveHistoryAerobicLog=function(id){
+    const log=arrH('aerobicLogs').find(v=>String(v.id)===String(id)); if(!log)return;
+    const v=id=>document.getElementById(id)?.value??'';
+    const n=id=>v(id)===''?null:Number(v(id));
+    const d=n('ha_distance'),t=n('ha_duration');
+    if(d!=null&&d<0||t!=null&&t<0){alert('Tempo e distância não podem ser negativos.');return}
+    const pace=(d>0&&t>0)?(typeof formatPaceMinutes==='function'?formatPaceMinutes(t/d):''):'';
+    Object.assign(log,{date:v('ha_date')||log.date,modality:v('ha_modality'),duration:t,distance:d,speed:n('ha_speed'),pace,intensity:v('ha_intensity'),rpe:n('ha_rpe'),participation:v('ha_participation'),status:v('ha_participation')==='participou'?'participou':'nao',obs:v('ha_obs')});
+    touch(log);
+    try{persist()}catch(e){console.error(e);alert('Não foi possível salvar a alteração.');return}
+    cancelHistoryTrainingEdit(); window.renderHistory?.(); alert('Registro aeróbico atualizado com sucesso.');
+  };
+
+  window.deleteHistoryAerobicLog=function(id){
+    const x=arrH('aerobicLogs').find(v=>String(v.id)===String(id)); if(!x)return;
+    if(!confirm('Excluir este registro de treinamento aeróbico?\
+\
+Somente esta sessão será excluída. O paciente, a prescrição e os demais registros permanecerão.'))return;
+    x.deleted=true; x.deletedAt=new Date().toISOString(); touch(x);
+    try{persist()}catch(e){console.error(e);alert('Não foi possível salvar a exclusão.');return}
+    window.renderHistory?.();
+  };
+
+  /* Replace only the historical training card rendered by the existing V9
+     history wrapper. All assessment/history code outside this card is left
+     untouched. */
+  function buildHistoryCard(pid){
+    const plan=arrH('trainingPlans').filter(alive).find(x=>String(x.patientId)===String(pid));
+    const strength=arrH('training').filter(x=>alive(x)&&String(x.patientId)===String(pid)&&(x.kind==='daily'||x.kind==null)).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+    const aerobic=arrH('aerobicLogs').filter(x=>alive(x)&&String(x.patientId)===String(pid)).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+    const pg=arrH('trainingProgressions').filter(x=>alive(x)&&String(x.patientId)===String(pid)).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+    let html=`<div class="card history-tools"><div class="section-head"><h3>Treinamento — Histórico e Prescrição</h3><div class="actions"><button class="btn" onclick="generateTrainingHistoryPDF('${escH(pid)}')">📄 Gerar PDF do histórico</button><button class="btn secondary" onclick="printHistoryTraining('${escH(pid)}')">🖨️ Imprimir</button></div></div>`;
+    if(plan){
+      html+=`<div class="notice"><b>Prescrição atual:</b> ${dateH(plan.date)} &nbsp;|&nbsp; <b>Professor:</b> ${escH(plan.professor||'—')}</div>`;
+      if(Array.isArray(plan.objectives)&&plan.objectives.length)html+=`<p><b>Objetivos:</b> ${escH(plan.objectives.join(', '))}</p>`;
+      ['A','B','C','D','E'].forEach(day=>{const exs=plan.strength?.[day]||[];if(!exs.length)return;html+=`<h4>Treino ${day}</h4><table class="history-training-table"><tr><th>Exercício</th><th>Carga</th><th>Séries</th><th>Repetições</th><th>Intervalo</th><th>Observações</th></tr>`;exs.forEach(ex=>html+=`<tr><td>${escH(ex.name||'—')}</td><td>${numH(ex.load)||'—'}</td><td>${numH(ex.sets)||'—'}</td><td>${numH(ex.reps)||'—'}</td><td>${numH(ex.interval)||'—'}</td><td>${escH(ex.obs||'—')}</td></tr>`);html+='</table>'});
+      const a=plan.aerobic||{}; const rows=[['Modalidade',a.modality],['Frequência',a.frequency],['Duração',a.duration],['Intensidade',a.intensity],['Objetivo',a.objective],['FC-alvo',a.fcTarget],['FC máxima',a.fcMax],['FC repouso',a.fcRest],['FC de reserva',a.fcReserve],['Velocidade',a.speed],['Distância',a.distance],['Resistência',a.resistance],['Nível',a.level],['Observações',a.obs]].filter(r=>r[1]!==null&&r[1]!==undefined&&r[1]!=='');
+      if(rows.length)html+=`<h4>Treinamento aeróbico — prescrição atual</h4><table>${rows.map(r=>`<tr><th>${escH(r[0])}</th><td>${escH(r[1])}</td></tr>`).join('')}</table>`;
+    }
+    html+=`<div id="historyTrainingEdit"></div>`;
+
+    html+=`<hr><h3>Treinamento resistido — registros realizados</h3>`;
+    if(!strength.length)html+=`<p class="muted">Nenhum registro de treinamento resistido.</p>`;
+    else{
+      html+=`<table class="history-training-table"><tr><th>Data</th><th>Treino</th><th>Exercício</th><th>Carga</th><th>Séries</th><th>Reps.</th><th>Tempo</th><th>RPE</th><th>Observações</th><th>Ações</th></tr>`;
+      strength.forEach(l=>html+=`<tr><td>${dateH(l.date)}</td><td>${escH(l.workout||'—')}</td><td>${escH(l.exercise||l.modality||'—')}</td><td>${numH(l.loadPerformed)||'—'}</td><td>${numH(l.setsPerformed)||'—'}</td><td>${numH(l.repsPerformed)||'—'}</td><td>${numH(l.duration)||'—'}</td><td>${numH(l.rpe)||'—'}</td><td>${escH(l.obs||'—')}</td><td><div class="actions" style="margin-top:0;flex-wrap:wrap"><button class="btn small" onclick="editHistoryTrainingLog('${escH(l.id)}')">✏️ Editar</button><button class="btn danger small" onclick="deleteHistoryTrainingLog('${escH(l.id)}')">🗑️ Excluir</button></div></td></tr>`);
+      html+='</table>';
+    }
+
+    html+=`<h3>Treinamento aeróbico — registros realizados</h3>`;
+    if(!aerobic.length)html+=`<p class="muted">Nenhum registro de treinamento aeróbico.</p>`;
+    else{
+      html+=`<table class="history-training-table"><tr><th>Data</th><th>Exercício / modalidade</th><th>Tempo</th><th>Distância</th><th>PACE</th><th>Intensidade</th><th>PES</th><th>Participou</th><th>Observação</th><th>Ações</th></tr>`;
+      aerobic.forEach(l=>{const part=(l.participation||l.status||'participou').toLowerCase()==='nao'?'NÃO':'SIM';html+=`<tr><td>${dateH(l.date)}</td><td>${escH(l.modality||l.exercise||'—')}</td><td>${numH(l.duration)||'—'}</td><td>${numH(l.distance)||'—'}</td><td>${escH(l.pace||'—')}</td><td>${escH(l.intensity||'—')}</td><td>${numH(l.rpe)||'—'}</td><td>${part}</td><td>${escH(l.obs||'—')}</td><td><div class="actions" style="margin-top:0;flex-wrap:wrap"><button class="btn small" onclick="editHistoryAerobicLog('${escH(l.id)}')">✏️ Editar</button><button class="btn danger small" onclick="deleteHistoryAerobicLog('${escH(l.id)}')">🗑️ Excluir</button></div></td></tr>`});
+      html+='</table>';
+    }
+    if(pg.length){html+=`<h3>Histórico de alterações da prescrição</h3><table><tr><th>Data</th><th>Exercício/Registro</th><th>Tipo</th><th>Professor</th><th>Observação</th></tr>`;pg.forEach(x=>html+=`<tr><td>${dateH(x.date)}</td><td>${escH(x.exerciseName||'Plano completo')}</td><td>${escH(x.type||'—')}</td><td>${escH(x.professor||'—')}</td><td>${escH(x.observation||'—')}</td></tr>`);html+='</table>';}
+    html+='</div>'; return html;
+  }
+
+  const prevRenderHistory=window.renderHistory;
+  window.renderHistory=function(){
+    try{if(typeof prevRenderHistory==='function')prevRenderHistory();}catch(e){console.error(e)}
+    setTimeout(()=>{
+      const pid=pidH(),host=document.getElementById('historyContent'); if(!pid||!host)return;
+      const old=host.querySelector('.history-training-enhancement-host'); if(old)old.remove();
+      const holder=document.createElement('div');holder.className='history-training-enhancement-host';holder.innerHTML=buildHistoryCard(pid);host.appendChild(holder);
+    },0);
+  };
+
+  /* Make the legacy history editor ignore deleted records. */
+  const oldEdit=window.editHistoryTrainingLog;
+  window.editHistoryTrainingLog=function(id){const x=arrH('training').find(v=>String(v.id)===String(id));if(!x||x.deleted)return;if(typeof oldEdit==='function')oldEdit(id)};
+
+  /* Hide deleted child records from the ordinary daily training list without
+     replacing its renderer. */
+  const oldGet=window.getTrainingLogs;
+  if(typeof oldGet==='function'){window.getTrainingLogs=function(pid){return oldGet(pid).filter(alive)}}
+
+})();
+</script>\n</body>
 </html>
