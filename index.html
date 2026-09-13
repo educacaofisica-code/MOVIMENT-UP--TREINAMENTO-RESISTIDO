@@ -6556,5 +6556,102 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 .report-patient-photo,.training-report-patient-photo{width:78px;height:78px;border-radius:50%;object-fit:cover;border:3px solid #e05288;display:block;margin-bottom:8px}
 @media print{.report-patient-photo{width:70px;height:70px}.training-report-patient-photo{width:65px;height:65px}}
 </style>
+
+<script id="v111-weekly-training-description">
+(function(){
+  'use strict';
+  const DAYS=['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
+  const esc=v=>typeof window.escX==='function'?window.escX(v):String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const dbx=()=>window.db||{};
+  const patients=()=>Array.isArray(dbx().patients)?dbx().patients:[];
+  function pid(){return String(document.getElementById('fdPatient')?.value||window.currentTrainingPatientId||'');}
+  function patient(){return patients().find(p=>String(p.id)===pid())||null}
+  function schedules(p){return (Array.isArray(dbx().trainingSchedules)?dbx().trainingSchedules:[]).filter(s=>String(s.patientId)===String(p)&&!s.cancelled).sort((a,b)=>Number(a.dayOfWeek)-Number(b.dayOfWeek)||String(a.time||'').localeCompare(String(b.time||'')))}
+  function plan(p){return (Array.isArray(dbx().trainingPlans)?dbx().trainingPlans:[]).find(x=>String(x.patientId)===String(p))||null}
+  function autoDescription(s,p){
+    const pl=plan(p), type=s.type||((s.activity||'').toLowerCase().includes('aerób')?'aerobico':'resistido');
+    if(type==='resistido'){
+      const w=String(s.workout||s.subcategory||'').trim(); const exs=pl?.strength?.[w]||[];
+      if(exs.length){
+        return exs.map((x,i)=>`${i+1}. ${x.name||'Exercício'} — ${x.sets??'—'} séries x ${x.reps??'—'} repetições${x.load!=null&&x.load!==''?` — ${x.load} kg`:''}${x.interval?` — intervalo ${x.interval}s`:''}${x.obs?` — ${x.obs}`:''}`).join('\n');
+      }
+      return w?`Treinamento Resistido — Treino ${w}. A execução seguirá a prescrição registrada no treinamento.`:'Treinamento Resistido conforme prescrição atual.';
+    }
+    if(type==='aerobico'){
+      const a=pl?.aerobic||{}; const parts=[];
+      if(s.modality||s.activity)parts.push(`Modalidade: ${s.modality||s.activity}`);
+      if(a.frequency)parts.push(`Frequência semanal: ${a.frequency}x`);
+      if(a.duration)parts.push(`Duração: ${a.duration} min`);
+      if(a.intensity)parts.push(`Intensidade: ${a.intensity}`);
+      if(a.objective)parts.push(`Objetivo: ${a.objective}`);
+      if(a.fcTarget)parts.push(`FC-alvo: ${a.fcTarget}`);
+      if(a.speed)parts.push(`Velocidade: ${a.speed}`);
+      if(a.distance)parts.push(`Distância: ${a.distance} km`);
+      if(a.resistance)parts.push(`Resistência: ${a.resistance}`);
+      if(a.level)parts.push(`Nível: ${a.level}`);
+      return parts.length?parts.join(' | '):`Treinamento Aeróbico — ${s.modality||s.activity||'modalidade programada'}, conforme prescrição atual.`;
+    }
+    return `${s.activity||'Atividade programada'}${s.workout||s.subcategory?` — ${s.workout||s.subcategory}`:''}. Realizar conforme o planejamento semanal.`;
+  }
+  function currentDescription(s,p){
+    if(Object.prototype.hasOwnProperty.call(s,'weeklyDescription')) return s.weeklyDescription||'';
+    if(s.descriptionRemoved) return '';
+    return autoDescription(s,p);
+  }
+  function save(){if(typeof window.persist==='function')window.persist(); else if(typeof window.persistX==='function')window.persistX();}
+  function ensureCard(){
+    const form=document.getElementById('fdScheduleForm'); if(!form)return null;
+    let card=document.getElementById('fdWeeklyTrainingDescription');
+    if(!card){
+      card=document.createElement('div'); card.id='fdWeeklyTrainingDescription'; card.className='card';
+      form.insertAdjacentElement('afterend',card);
+    }
+    return card;
+  }
+  window.renderWeeklyTrainingDescriptionX=function(){
+    const card=ensureCard(),p=patient(); if(!card)return;
+    if(!p){card.innerHTML='<div class="section-head"><h2>DESCRIÇÃO DO TREINO DA SEMANA</h2></div><div class="notice">Selecione um paciente para visualizar o treino que será realizado durante a semana.</div>';return;}
+    const ss=schedules(p.id);
+    let html='<div class="fd-section-head"><div class="fd-icon">🏋</div><div><h2>DESCRIÇÃO DO TREINO DA SEMANA</h2><p class="muted small">Descrição baseada no treino salvo em Prescrição de Treino. Você pode editar, salvar ou excluir a descrição sem alterar a prescrição.</p></div></div>';
+    if(!ss.length){card.innerHTML=html+'<div class="notice">Nenhum cronograma cadastrado para este paciente. Salve primeiro o cronograma semanal.</div>';return;}
+    html+='<div class="fd-weekly-description-list">';
+    ss.forEach((s,i)=>{
+      const desc=currentDescription(s,p.id), key=esc(s.id);
+      html+=`<div class="fd-weekly-item" data-schedule-id="${key}"><div class="fd-weekly-item-head"><div><b>${esc(DAYS[Number(s.dayOfWeek)]||'—')}</b> <span class="muted">${esc(s.time||s.horario||'—')}</span></div><span class="badge">${esc(s.activity||scheduleLabel(s))}${s.workout||s.subcategory?` — ${esc(s.workout||s.subcategory)}`:''}</span></div><div class="fd-weekly-view" id="fdWeeklyView_${key}">${desc?esc(desc).replace(/\n/g,'<br>'):'<span class="muted">Nenhuma descrição salva. Clique em Editar para incluir.</span>'}</div><div class="fd-weekly-edit hidden" id="fdWeeklyEdit_${key}"><textarea id="fdWeeklyText_${key}" rows="5">${esc(desc)}</textarea><div class="actions"><button type="button" class="btn" onclick="fdSaveWeeklyDescriptionX('${key}')">SALVAR</button><button type="button" class="btn secondary" onclick="fdCancelWeeklyDescriptionX('${key}')">CANCELAR</button></div></div><div class="actions"><button type="button" class="btn secondary" onclick="fdEditWeeklyDescriptionX('${key}')">EDITAR</button><button type="button" class="btn danger" onclick="fdDeleteWeeklyDescriptionX('${key}')">EXCLUIR</button></div></div>`;
+    });
+    html+='</div>'; card.innerHTML=html;
+  };
+  function findSchedule(id){return (dbx().trainingSchedules||[]).find(s=>String(s.id)===String(id));}
+  window.fdEditWeeklyDescriptionX=function(id){document.getElementById('fdWeeklyView_'+id)?.classList.add('hidden');document.getElementById('fdWeeklyEdit_'+id)?.classList.remove('hidden');document.getElementById('fdWeeklyText_'+id)?.focus()};
+  window.fdCancelWeeklyDescriptionX=function(id){document.getElementById('fdWeeklyView_'+id)?.classList.remove('hidden');document.getElementById('fdWeeklyEdit_'+id)?.classList.add('hidden')};
+  window.fdSaveWeeklyDescriptionX=function(id){const s=findSchedule(id);if(!s)return;const ta=document.getElementById('fdWeeklyText_'+id);if(!ta)return;s.weeklyDescription=ta.value.trim();s.descriptionRemoved=false;s.updatedAt=new Date().toISOString();save();renderWeeklyTrainingDescriptionX();};
+  window.fdDeleteWeeklyDescriptionX=function(id){const s=findSchedule(id);if(!s)return;if(!confirm('Excluir somente a descrição deste treino semanal? O cronograma e a prescrição do paciente serão preservados.'))return;s.weeklyDescription='';s.descriptionRemoved=true;s.updatedAt=new Date().toISOString();save();renderWeeklyTrainingDescriptionX();};
+  function scheduleLabel(s){return s.type==='resistido'?'Treinamento Resistido':(s.modality||s.activity||'Atividade')}
+  const oldRender=window.renderFrequencyX;
+  window.renderFrequencyX=function(){if(typeof oldRender==='function')oldRender.apply(this,arguments);setTimeout(renderWeeklyTrainingDescriptionX,0)};
+  function removeTrainingFrequencyUI(){
+    const tr=document.getElementById('training'); if(!tr)return;
+    ['v41FrequencyUI','legacyDailyTraining'].forEach(id=>{const el=document.getElementById(id);if(el&&tr.contains(el))el.remove();});
+    tr.querySelectorAll('#v41FrequencyUI,#legacyDailyTraining').forEach(el=>el.remove());
+  }
+  const oldShow=window.show;
+  if(typeof oldShow==='function'&&!window.__v111ShowPatched){
+    window.__v111ShowPatched=true;
+    window.show=function(id){const r=oldShow.apply(this,arguments);if(id==='training')setTimeout(removeTrainingFrequencyUI,30);if(id==='frequencyDaily')setTimeout(()=>{renderWeeklyTrainingDescriptionX();removeTrainingFrequencyUI()},30);return r};
+  }
+  const mo=new MutationObserver(()=>{removeTrainingFrequencyUI();if(document.getElementById('frequencyDaily')?.classList.contains('active'))renderWeeklyTrainingDescriptionX()});
+  mo.observe(document.body,{childList:true,subtree:true});
+  setTimeout(()=>{removeTrainingFrequencyUI();renderWeeklyTrainingDescriptionX()},900);
+})();
+</script>
+<style id="v111-weekly-training-style">
+#training #v41FrequencyUI,#training #legacyDailyTraining{display:none!important}
+#fdWeeklyTrainingDescription{border:1px solid #f0bfd0}
+.fd-weekly-item{border:1px solid #d7e7f0;border-radius:10px;margin:10px 0;padding:12px;background:#fff}
+.fd-weekly-item-head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.fd-weekly-view{background:#f4fbfd;border-left:4px solid #e05288;border-radius:6px;padding:10px;line-height:1.5;white-space:normal}
+.fd-weekly-edit textarea{width:100%;min-height:110px;border:1px solid #a9d5e5;border-radius:7px;padding:9px;font-family:inherit;resize:vertical}
+.fd-weekly-item .actions{margin-top:9px}
+</style>
 </body>
 </html>
