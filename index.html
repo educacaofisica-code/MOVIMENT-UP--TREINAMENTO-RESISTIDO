@@ -547,8 +547,10 @@ a:hover{color:#e05288;}
   <button onclick="show('patients')" class="nav-patients"><span>♟</span> Pacientes</button>
   <button onclick="show('assessment')"><span>♙</span> Avaliação</button>
   <button onclick="show('history')"><span>▣</span> Histórico / Evolução</button>
-  <button onclick="show('training')"><span>♮</span> Treinamento</button>
+  <button onclick="show('training')"><span>♮</span> PRESCRIÇÃO DE TREINO</button>
   <button class="nav-suggest" onclick="show('suggestion')"><span>✧</span> Sugestão de Treino</button>
+  
+<button onclick="show('frequencyDaily')"><span>✓</span> FREQUÊNCIA DIÁRIA</button>
   <button onclick="show('report')"><span>▤</span> Relatório / PDF</button>
   <button onclick="show('backup')"><span>♙</span> Backup</button>
 </nav>
@@ -854,7 +856,23 @@ a:hover{color:#e05288;}
 
 
 <section id="report" class="view">
-<div class="card"><h2>Relatório / PDF</h2><label>Paciente<select id="rPatient" onchange="renderReport()"></select></label><div class="actions"><button class="btn" onclick="renderReport();">Atualizar resultados</button><button class="btn" onclick="generatePatientPDF()">Imprimir / Salvar como PDF</button></div><div id="reportContent"><p class="muted">Selecione um paciente.</p></div></div>
+<div class="card"><h2>Relatório / PDF</h2><label>Paciente<select id="rPatient" onchange="renderReport()"></select></label><div class="actions"><button class="btn" onclick="renderReport();">Atualizar resultados</button><button class="btn" onclick="generatePatientPDF()">Imprimir / Salvar como PDF</button><button class="btn secondary" type="button" onclick="visualizarPDFTreinamento()">Visualizar PDF</button></div><div id="reportContent"><p class="muted">Selecione um paciente.</p></div></div>
+</section>
+
+
+<section id="frequencyDaily" class="view">
+<div class="card"><h2>FREQUÊNCIA DIÁRIA</h2><p class="muted">Cronograma de Atendimento + Frequência dos Atendimentos + Presença/Falta.</p>
+<label>Paciente<select id="fdPatient"></select></label>
+</div>
+<div class="card"><div class="section-head"><h2>CRONOGRAMA DE ATENDIMENTO</h2></div>
+<div class="grid">
+<label>Dia<select id="fdDay"><option value="1">Segunda-feira</option><option value="2">Terça-feira</option><option value="3">Quarta-feira</option><option value="4">Quinta-feira</option><option value="5">Sexta-feira</option><option value="6">Sábado</option></select></label>
+<label>Horário<input id="fdTime" type="time"></label>
+<label>Atividade<select id="fdActivity"><option>Treino Aeróbico</option><option>Treino Resistido</option><option>Treinamento Funcional</option><option>Hidroginástica</option><option>Atividade Aquática</option><option>P. Pedalar</option><option>Gameterapia</option><option>Atividade Rítmica e Expressiva com Dança / Ensaio</option><option>Bocha Adaptada</option><option>Prática de Yoga</option><option>Psicomotricidade</option><option>Comunicação e Expressão</option><option>Esportes</option></select></label>
+<label>Subcategoria / treino<input id="fdWorkout" placeholder="Ex.: Treino A, MMII, Kundalini..."></label>
+</div><div class="actions"><button class="btn" type="button" onclick="fdSaveSchedule()">SALVAR CRONOGRAMA</button><button class="btn secondary" type="button" onclick="fdCancelEdit()" id="fdCancel" style="display:none">Cancelar edição</button></div>
+<div id="fdScheduleTable"></div></div>
+<div class="card"><div class="section-head"><h2>FREQUÊNCIA DOS ATENDIMENTOS</h2></div><div class="actions"><button class="btn" type="button" onclick="fdRefreshAttendance()">Atualizar</button><button class="btn secondary" type="button" onclick="fdPdf()">GERAR PDF DA FREQUÊNCIA</button></div><div id="fdAttendanceTable"></div></div>
 </section>
 
 <section id="backup" class="view">
@@ -2251,7 +2269,7 @@ document.getElementById('patientAssessmentsModal')?.addEventListener('click',e=>
      <label>Velocidade média<input id="v41AerSpeed" readonly></label><label>PACE<input id="v41AerPace" readonly></label><label>FC inicial<input type="number" id="v41AerFci"></label><label>FC média<input type="number" id="v41AerFca"></label><label>FC final<input type="number" id="v41AerFcf"></label><label>FC-alvo<input id="v41AerTarget" readonly></label><label>Intensidade 0–10<input type="number" min="0" max="10" step="0.1" id="v41AerRpe"></label><label>Observações<textarea id="v41AerObs"></textarea></label>
     </div><div class="actions"><button class="btn" onclick="v41SaveAerobic()">Registrar sessão aeróbica</button></div><div id="v41AerTable"></div>
    </div>
-   <div class="card"><div class="section-head"><h2>Frequência semanal / mensal</h2><span class="muted small">Somente aulas programadas entram no cálculo.</span></div><div class="grid"><label>Início<input type="date" id="v41Start" onchange="v41RenderMetrics()"></label><label>Fim<input type="date" id="v41End" onchange="v41RenderMetrics()"></label></div><div id="v41Metrics"></div></div>`;
+   `;
    if(anchor)anchor.parentNode.insertBefore(wrap,anchor);else training.appendChild(wrap);
    v41ToggleSchedule();v41ToggleAbsence();v41RenderAll();
  }
@@ -5629,6 +5647,7 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   #trainingHistoryPrintShell .strength-plan-table th{background:#eaf4ff}
   #trainingHistoryPrintShell .aerobic-plan-table th{width:32%;background:#eaf4ff}
 }
+</style>
 <style id="moviment-up-history-training-style">
 .history-tools{margin-top:14px}
 .history-tools .section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
@@ -6018,6 +6037,273 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   document.addEventListener('DOMContentLoaded',boot);
   window.addEventListener('load',boot);
 
+})();
+</script>
+
+
+<script>
+/* V10.6 — correção exclusiva do CRONOGRAMA: visível, editável e persistente.
+   Não altera a lógica de frequência, presença/falta, registros, métricas ou PDF. */
+(function(){
+  function getSchedule(id){ return (db.trainingSchedules||[]).find(x=>String(x.id)===String(id)); }
+  function resetScheduleForm(){
+    const b=document.querySelector('#v41FrequencyUI button[data-schedule-save]');
+    if(b){ b.textContent='Adicionar ao cronograma'; b.removeAttribute('data-editing-id'); }
+    window._v41ScheduleEditingId=null;
+    const d=document.getElementById('v41Day'),t=document.getElementById('v41Type'),w=document.getElementById('v41Workout'),m=document.getElementById('v41Mod');
+    if(d)d.value='1'; if(t)t.value='resistido'; if(w)w.value='A'; if(m)m.value='Esteira';
+    if(typeof v41ToggleSchedule==='function')v41ToggleSchedule();
+  }
+  window.v41EditSchedule=function(id){
+    const x=getSchedule(id); if(!x)return;
+    const d=document.getElementById('v41Day'),t=document.getElementById('v41Type'),w=document.getElementById('v41Workout'),m=document.getElementById('v41Mod');
+    if(d)d.value=String(x.dayOfWeek);
+    if(t)t.value=x.type||'resistido';
+    if(w)w.value=x.workout||'A';
+    if(m)m.value=x.modality||'Esteira';
+    window._v41ScheduleEditingId=String(id);
+    if(typeof v41ToggleSchedule==='function')v41ToggleSchedule();
+    const b=document.querySelector('#v41FrequencyUI button[data-schedule-save]');
+    if(b){b.textContent='Salvar alteração do cronograma';b.setAttribute('data-editing-id',String(id));}
+    const card=document.getElementById('v41FrequencyUI');
+    if(card)card.scrollIntoView({behavior:'smooth',block:'start'});
+  };
+  window.v41CancelScheduleEdit=function(){resetScheduleForm();};
+
+  const originalAdd=window.v41AddSchedule;
+  window.v41AddSchedule=function(){
+    const editing=window._v41ScheduleEditingId;
+    if(editing){
+      const x=getSchedule(editing);
+      if(!x){resetScheduleForm();return;}
+      const type=document.getElementById('v41Type').value;
+      const day=Number(document.getElementById('v41Day').value);
+      const workout=type==='resistido'?document.getElementById('v41Workout').value:'';
+      const modality=type==='aerobico'?document.getElementById('v41Mod').value:'';
+      const dup=(db.trainingSchedules||[]).some(v=>String(v.id)!==String(editing)&&String(v.patientId)===String(currentTrainingPatientId)&&Number(v.dayOfWeek)===day&&v.type===type&&v.workout===workout&&v.modality===modality&&!v.cancelled);
+      if(dup){alert('Essa atividade já está programada nesse dia.');return;}
+      Object.assign(x,{dayOfWeek:day,type,workout,modality,cancelled:false,updatedAt:new Date().toISOString()});
+      persist(); resetScheduleForm(); v41RenderAll();
+      return;
+    }
+    originalAdd();
+  };
+
+  const originalRender=window.v41RenderAll;
+  window.v41RenderAll=function(){
+    originalRender.apply(this,arguments);
+    const ui=document.getElementById('v41FrequencyUI');
+    if(!ui)return;
+    const card=ui.querySelector('.card');
+    if(card){
+      const head=card.querySelector('.section-head');
+      if(head){
+        let title=head.querySelector('h2');
+        if(title)title.textContent='Cronograma de treinamento';
+        let badge=head.querySelector('.v106-schedule-label');
+        if(!badge){
+          badge=document.createElement('span'); badge.className='v106-schedule-label';
+          badge.style.cssText='display:block;margin-top:6px;font-weight:700;font-size:13px;';
+          badge.textContent='CRONOGRAMA ATUAL — informações salvas para este paciente';
+          head.appendChild(badge);
+        }
+      }
+      const btn=card.querySelector('button[onclick="v41AddSchedule()"]');
+      if(btn){btn.setAttribute('data-schedule-save','1');}
+      let cancel=card.querySelector('.v106-cancel-schedule');
+      if(!cancel){
+        cancel=document.createElement('button'); cancel.type='button'; cancel.className='btn secondary v106-cancel-schedule'; cancel.textContent='Cancelar edição'; cancel.style.display='none'; cancel.onclick=window.v41CancelScheduleEdit;
+        const actions=btn?.parentElement; if(actions)actions.appendChild(cancel);
+      }
+      const editing=!!window._v41ScheduleEditingId;
+      if(cancel)cancel.style.display=editing?'inline-block':'none';
+      if(btn)btn.textContent=editing?'Salvar alteração do cronograma':'Adicionar ao cronograma';
+    }
+    const st=document.getElementById('v41ScheduleTable');
+    if(st && currentTrainingPatientId){
+      const ss=(db.trainingSchedules||[]).filter(x=>String(x.patientId)===String(currentTrainingPatientId)&&!x.cancelled).slice().sort((a,b)=>Number(a.dayOfWeek)-Number(b.dayOfWeek));
+      st.innerHTML=ss.length
+        ? '<div style="margin:12px 0 8px;font-weight:700">Cronograma Atual</div><table><tr><th>Dia</th><th>Tipo</th><th>Atividade</th><th>Horário</th><th>Ações</th></tr>'+ss.map(x=>'<tr><td>'+dayName(x.dayOfWeek)+'</td><td>'+(x.type==='resistido'?'Treinamento Resistido':'Treinamento Aeróbico')+'</td><td>'+esc2(x.workout||x.modality||'—')+'</td><td>'+esc2(x.time||x.horario||x.hour||'—')+'</td><td><button type="button" class="btn secondary" onclick="v41EditSchedule(\''+x.id+'\')">Editar</button> <button type="button" class="btn danger" onclick="v41RemoveSchedule(\''+x.id+'\')">Excluir</button></td></tr>').join('')+'</table>'
+        : '<div class="notice">Nenhuma atividade programada para este paciente.</div>';
+    }
+  };
+})();
+</script>
+
+<script id="moviment-up-v107-final-fix">
+(function(){
+  'use strict';
+  const A=()=>Array.isArray(window.db?.trainingSchedules)?window.db.trainingSchedules:[];
+  const escV=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const dayV=n=>['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'][Number(n)]||'—';
+  const pidV=()=>window.currentTrainingPatientId||document.getElementById('tPatient')?.value||'';
+  const schedulesV=pid=>A().filter(x=>String(x.patientId)===String(pid)&&!x.cancelled).slice().sort((a,b)=>Number(a.dayOfWeek)-Number(b.dayOfWeek));
+
+  function removeRangeFrequencyCard(){
+    document.querySelectorAll('#v41FrequencyUI .card').forEach(card=>{
+      if(card.querySelector('#v41Start')||card.querySelector('#v41End')||/Frequência semanal \/ mensal/i.test(card.textContent||'')) card.remove();
+    });
+  }
+
+  function renderScheduleV(){
+    const wrap=document.getElementById('v41FrequencyUI'), pid=pidV();
+    if(!wrap||!pid)return;
+    const table=document.getElementById('v41ScheduleTable');
+    if(!table)return;
+    const rows=schedulesV(pid);
+    table.innerHTML=rows.length
+      ? '<div class="v107-current-title">CRONOGRAMA ATUAL</div><div class="muted small" style="margin-bottom:8px">Atividades salvas para o paciente selecionado.</div><table class="v107-schedule-table"><tr><th>Dia</th><th>Tipo</th><th>Atividade</th><th>Horário</th><th>Ações</th></tr>'+
+        rows.map(x=>'<tr><td>'+dayV(x.dayOfWeek)+'</td><td>'+((x.type||'resistido')==='resistido'?'Treinamento Resistido':'Treinamento Aeróbico')+'</td><td>'+escV(x.workout||x.modality||'—')+'</td><td>'+escV(x.time||x.horario||x.hour||'—')+'</td><td><button type="button" class="btn secondary v107-edit-schedule" data-id="'+escV(x.id)+'">Editar</button> <button type="button" class="btn danger v107-delete-schedule" data-id="'+escV(x.id)+'">Excluir</button></td></tr>').join('')+
+        '</table>'
+      : '<div class="notice">Nenhuma atividade programada para este paciente.</div>';
+  }
+
+  function editScheduleV(id){
+    const x=A().find(v=>String(v.id)===String(id)); if(!x)return;
+    const d=document.getElementById('v41Day'),t=document.getElementById('v41Type'),w=document.getElementById('v41Workout'),m=document.getElementById('v41Mod');
+    if(d)d.value=String(x.dayOfWeek??1);
+    if(t)t.value=x.type||'resistido';
+    if(w)w.value=x.workout||'A';
+    if(m)m.value=x.modality||'Esteira';
+    window.__v107ScheduleEditingId=String(id);
+    if(typeof window.v41ToggleSchedule==='function')window.v41ToggleSchedule();
+    const btn=document.querySelector('#v41FrequencyUI .actions button[onclick="v41AddSchedule()"]');
+    if(btn){btn.textContent='Salvar alteração do cronograma';btn.dataset.v107Editing='1';}
+    let cancel=document.getElementById('v107CancelSchedule');
+    if(!cancel){cancel=document.createElement('button');cancel.type='button';cancel.id='v107CancelSchedule';cancel.className='btn secondary';cancel.textContent='Cancelar edição';cancel.onclick=cancelEditV;btn?.parentElement?.appendChild(cancel)}
+    cancel.style.display='inline-block';
+    document.getElementById('v41ScheduleTable')?.scrollIntoView({behavior:'smooth',block:'center'});
+  }
+  function cancelEditV(){
+    window.__v107ScheduleEditingId=null;
+    const btn=document.querySelector('#v41FrequencyUI .actions button[onclick="v41AddSchedule()"]');
+    if(btn){btn.textContent='Adicionar ao cronograma';delete btn.dataset.v107Editing;}
+    const cancel=document.getElementById('v107CancelSchedule');if(cancel)cancel.style.display='none';
+    const d=document.getElementById('v41Day'),t=document.getElementById('v41Type'),w=document.getElementById('v41Workout'),m=document.getElementById('v41Mod');
+    if(d)d.value='1';if(t)t.value='resistido';if(w)w.value='A';if(m)m.value='Esteira';
+    if(typeof window.v41ToggleSchedule==='function')window.v41ToggleSchedule();
+  }
+  function deleteScheduleV(id){
+    const x=A().find(v=>String(v.id)===String(id));if(!x)return;
+    if(!confirm('Excluir esta atividade do cronograma deste paciente?'))return;
+    window.db.trainingSchedules=A().filter(v=>String(v.id)!==String(id));
+    if(typeof window.persist==='function')window.persist();
+    cancelEditV();renderScheduleV();
+  }
+
+  const originalAddV=window.v41AddSchedule;
+  if(typeof originalAddV==='function'&&!window.__v107AddPatched){
+    window.__v107AddPatched=true;
+    window.v41AddSchedule=function(){
+      const editing=window.__v107ScheduleEditingId;
+      if(!editing)return originalAddV.apply(this,arguments);
+      const x=A().find(v=>String(v.id)===String(editing));if(!x){cancelEditV();return;}
+      const type=document.getElementById('v41Type')?.value||'resistido';
+      const day=Number(document.getElementById('v41Day')?.value||1);
+      const workout=type==='resistido'?(document.getElementById('v41Workout')?.value||''):'';
+      const modality=type==='aerobico'?(document.getElementById('v41Mod')?.value||''):'';
+      const duplicate=A().some(v=>String(v.id)!==String(editing)&&String(v.patientId)===String(pidV())&&!v.cancelled&&Number(v.dayOfWeek)===day&&v.type===type&&String(v.workout||'')===String(workout)&&String(v.modality||'')===String(modality));
+      if(duplicate){alert('Essa atividade já está programada nesse dia.');return;}
+      Object.assign(x,{dayOfWeek:day,type,workout,modality,cancelled:false,updatedAt:new Date().toISOString()});
+      if(typeof window.persist==='function')window.persist();
+      cancelEditV();renderScheduleV();
+    };
+  }
+
+  document.addEventListener('click',function(ev){
+    const e=ev.target.closest?.('.v107-edit-schedule');
+    const d=ev.target.closest?.('.v107-delete-schedule');
+    if(e){ev.preventDefault();editScheduleV(e.dataset.id);return;}
+    if(d){ev.preventDefault();deleteScheduleV(d.dataset.id);return;}
+  });
+
+  function refreshV(){
+    removeRangeFrequencyCard();
+    renderScheduleV();
+  }
+
+  const oldLoadV=window.loadTrainingPatient;
+  if(typeof oldLoadV==='function'&&!window.__v107LoadPatched){
+    window.__v107LoadPatched=true;
+    window.loadTrainingPatient=function(){
+      const r=oldLoadV.apply(this,arguments);
+      setTimeout(refreshV,60);setTimeout(refreshV,400);
+      return r;
+    };
+  }
+  const oldShowV=window.show;
+  if(typeof oldShowV==='function'&&!window.__v107ShowPatched){
+    window.__v107ShowPatched=true;
+    window.show=function(id){const r=oldShowV.apply(this,arguments);if(id==='training'){setTimeout(refreshV,80);setTimeout(refreshV,450)}return r};
+  }
+
+  /* Training History PDF: include the patient's saved weekly schedule and no date-range frequency block. */
+  const oldPdfV=window.generateTrainingHistoryPDF;
+  if(typeof oldPdfV==='function'&&!window.__v107PdfPatched){
+    window.__v107PdfPatched=true;
+    window.generateTrainingHistoryPDF=function(pid){
+      pid=pid||document.getElementById('hPatient')?.value||'';
+      if(!pid)return oldPdfV.apply(this,arguments);
+      try{
+        const p=(window.db?.patients||[]).find(x=>String(x.id)===String(pid));
+        if(!p)return oldPdfV.apply(this,arguments);
+        const source=document.getElementById('historyContent')?.querySelector('.history-training-enhancement-host');
+        const base=source?source.innerHTML:(typeof block==='function'?block(pid):'');
+        const tmp=document.createElement('div');tmp.innerHTML=base;
+        const rows=schedulesV(pid);
+        const scheduleHtml='<div class="card"><h2>CRONOGRAMA SEMANAL DO PACIENTE</h2>'+
+          (rows.length?'<table><tr><th>Dia</th><th>Atividade</th><th>Horário</th></tr>'+rows.map(x=>'<tr><td>'+dayV(x.dayOfWeek)+'</td><td>'+((x.type||'resistido')==='resistido'?'Treinamento Resistido — '+(x.workout||'—'):'Treinamento Aeróbico — '+(x.modality||'—'))+'</td><td>'+escV(x.time||x.horario||x.hour||'—')+'</td></tr>').join('')+'</table>':'<p class="muted">Nenhuma atividade programada.</p>')+'</div>';
+        tmp.insertAdjacentHTML('afterbegin',scheduleHtml);
+        tmp.querySelectorAll('.actions,#historyTrainingEdit,button,[onclick*="editHistoryTrainingLog"],[onclick*="deleteHistoryTrainingLog"],[onclick*="openHistoryPrescriptionEdit"],[onclick*="printHistoryTraining"],[onclick*="generateTrainingHistoryPDF"],[onclick*="saveHistoryTrainingLog"],[onclick*="cancelHistoryTrainingEdit"]').forEach(x=>x.remove());
+        tmp.querySelectorAll('table tr').forEach(tr=>Array.from(tr.cells||[]).forEach(td=>{if(/\b(Ações|Ação)\b/i.test((td.textContent||'').trim()))td.remove();}));
+        const old=document.getElementById('trainingHistoryPrintShell');if(old)old.remove();
+        const shell=document.createElement('div');shell.id='trainingHistoryPrintShell';
+        shell.innerHTML='<div class="brand"><div><h1>Moviment’ Up — Treinamento Resistido Inclusivo</h1><div class="subtitle">Casa de David — Tabernáculo Espírita para Excepcionais</div><div><b>HISTÓRICO DE TREINAMENTOS</b></div></div></div><div class="patient"><b>Paciente:</b> '+escV(p.name||'—')+'<br><b>Unidade:</b> '+escV(p.unit||'—')+'</div>'+tmp.innerHTML+'<div class="footer">Documento gerado a partir do Histórico / Evolução da plataforma Moviment’ Up.</div>';
+        document.body.appendChild(shell);document.body.classList.add('printing-training-history');window.print();document.body.classList.remove('printing-training-history');shell.remove();return true;
+      }catch(e){console.error('PDF treinamento V10.7',e);alert('Não foi possível gerar o PDF do treinamento. '+(e?.message||''));return false;}
+    };
+  }
+
+  function bootV(){setTimeout(refreshV,200);setTimeout(refreshV,900);}
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bootV);else bootV();
+  window.addEventListener('load',bootV);
+})();
+</script>
+<style id="moviment-up-v107-final-style">
+.v107-current-title{font-weight:800;font-size:15px;margin:14px 0 4px;color:#0753aa;text-transform:uppercase}
+.v107-schedule-table{width:100%;border-collapse:collapse;margin-top:6px}
+.v107-schedule-table th,.v107-schedule-table td{border:1px solid #d8dee2;padding:7px;text-align:left;vertical-align:top}
+.v107-schedule-table th{background:#f2f5f7}
+@media print{#trainingHistoryPrintShell .v107-schedule-table{margin-bottom:14px}}
+</style>
+
+
+<script id="v108-prescricao-frequencia">
+(function(){
+'use strict';
+const esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+const days=['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
+const arr=x=>Array.isArray(x)?x:[];
+function pid(){return document.getElementById('fdPatient')?.value||window.currentTrainingPatientId||document.getElementById('tPatient')?.value||''}
+function pats(){return arr(window.db?.patients)}
+function fillPatients(){const s=document.getElementById('fdPatient');if(!s)return;const old=s.value||pid();s.innerHTML=pats().map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');if(old&&pats().some(p=>String(p.id)===String(old)))s.value=old;renderSchedule();renderAtt()}
+function schedules(){return arr(window.db?.trainingSchedules).filter(x=>String(x.patientId)===String(pid())&&!x.cancelled).sort((a,b)=>Number(a.dayOfWeek)-Number(b.dayOfWeek))}
+let editing=null;
+window.fdEditSchedule=function(id){const x=arr(db.trainingSchedules).find(v=>String(v.id)===String(id));if(!x)return;editing=String(id);fdDay.value=String(x.dayOfWeek);fdTime.value=x.time||x.horario||'';fdActivity.value=x.activity||((x.type||'')==='resistido'?'Treino Resistido':'Treino Aeróbico');fdWorkout.value=x.workout||x.subcategory||x.modality||'';fdCancel.style.display='inline-block';window.show('frequencyDaily')};
+window.fdCancelEdit=function(){editing=null;fdTime.value='';fdWorkout.value='';fdCancel.style.display='none'};
+window.fdSaveSchedule=function(){const p=pid();if(!p)return alert('Selecione um paciente.');const day=Number(fdDay.value),activity=fdActivity.value,time=fdTime.value||'',workout=fdWorkout.value.trim();const type=/aer[oó]bico/i.test(activity)?'aerobico':/resistido/i.test(activity)?'resistido':'programa';if(editing){const x=arr(db.trainingSchedules).find(v=>String(v.id)===String(editing));if(x)Object.assign(x,{dayOfWeek:day,time,horario:time,activity,workout,subcategory:workout,type,updatedAt:new Date().toISOString()});}else{db.trainingSchedules=arr(db.trainingSchedules);db.trainingSchedules.push({id:typeof uid==='function'?uid('sch'):('sch_'+Date.now()),patientId:p,dayOfWeek:day,time,horario:time,activity,workout,subcategory:workout,type,cancelled:false,createdAt:new Date().toISOString()});}persist();fdCancelEdit();renderSchedule()};
+window.fdDeleteSchedule=function(id){if(!confirm('Excluir este item do cronograma?'))return;db.trainingSchedules=arr(db.trainingSchedules).filter(v=>String(v.id)!==String(id));persist();renderSchedule()};
+function renderSchedule(){const el=document.getElementById('fdScheduleTable');if(!el)return;const rows=schedules();el.innerHTML=rows.length?'<div style="margin:14px 0 8px;font-weight:800">CRONOGRAMA ATUAL DO PACIENTE</div><table><tr><th>Dia</th><th>Horário</th><th>Atividade</th><th>Treino/Subcategoria</th><th>Ações</th></tr>'+rows.map(x=>`<tr><td>${days[Number(x.dayOfWeek)]||'—'}</td><td>${esc(x.time||x.horario||'—')}</td><td>${esc(x.activity||((x.type||'')==='resistido'?'Treino Resistido':(x.type||'')==='aerobico'?'Treino Aeróbico':'Programa'))}</td><td>${esc(x.workout||x.subcategory||x.modality||'—')}</td><td><button class="btn secondary" type="button" onclick="fdEditSchedule('${esc(x.id)}')">Editar</button> <button class="btn danger" type="button" onclick="fdDeleteSchedule('${esc(x.id)}')">Excluir</button></td></tr>`).join('')+'</table>':'<div class="notice">Nenhum cronograma cadastrado para este paciente.</div>'}
+function att(){return arr(window.db?.trainingAttendance).filter(x=>String(x.patientId)===String(pid())).sort((a,b)=>String(b.date).localeCompare(String(a.date)))}
+function renderAtt(){const el=document.getElementById('fdAttendanceTable');if(!el)return;const rows=att();el.innerHTML=rows.length?'<table><tr><th>Data</th><th>Horário</th><th>Atividade</th><th>Status</th><th>Observação</th></tr>'+rows.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.time||x.horario||'—')}</td><td>${esc(x.activity||x.workout||x.modality||'—')}</td><td>${String(x.status||'').toLowerCase().match(/compareceu|participou|presente/)?'COMPARECEU':'NÃO COMPARECEU'}</td><td>${esc(x.reason||x.obs||'—')}</td></tr>`).join('')+'</table>':'<div class="notice">Nenhum registro de frequência.</div>'}
+window.fdRefreshAttendance=renderAtt;
+window.fdPdf=function(){const p=pats().find(x=>String(x.id)===String(pid()));if(!p)return alert('Selecione um paciente.');const rows=schedules(),a=att();const lines=['MOVIMENT’ UP — FREQUÊNCIA DIÁRIA','Casa de David — Tabernáculo Espírita para Excepcionais','Paciente: '+(p.name||'—'),'','CRONOGRAMA DE ATENDIMENTO'];rows.forEach(x=>lines.push((days[Number(x.dayOfWeek)]||'—')+' | '+(x.time||x.horario||'—')+' | '+(x.activity||x.workout||x.modality||'—')+' | '+(x.workout||x.subcategory||'—')));lines.push('','FREQUÊNCIA DOS ATENDIMENTOS');a.forEach(x=>lines.push((x.date||'—')+' | '+(x.time||x.horario||'—')+' | '+(x.activity||x.workout||x.modality||'—')+' | '+(String(x.status||'').toLowerCase().match(/compareceu|participou|presente/)?'COMPARECEU':'NÃO COMPARECEU')+' | '+(x.reason||x.obs||'—')));openPdf(lines,'Frequencia_'+(p.name||'Paciente')+'.pdf')};
+function makeSimplePdf(lines){const bytes=s=>Array.from(unescape(encodeURIComponent(s))).map(c=>c.charCodeAt(0));const escp=s=>{let o=[40];for(const c of String(s)){const n=c.charCodeAt(0);if(n===40||n===41||n===92)o.push(92);o.push(n<=255?n:63)}o.push(41);return o};const pages=[];for(let i=0;i<lines.length;i+=50)pages.push(lines.slice(i,i+50));if(!pages.length)pages.push(['Sem dados']);const objs=[];objs[1]='<< /Type /Catalog /Pages 2 0 R >>';objs[3]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';let id=5,pids=[],cids=[];pages.forEach(()=>{pids.push(id++);cids.push(id++)});objs[2]='<< /Type /Pages /Kids ['+pids.map(x=>x+' 0 R').join(' ')+'] /Count '+pages.length+' >>';pages.forEach((pg,i)=>{let c='BT\n/F1 10 Tf\n42 800 Td\n';pg.forEach((l,j)=>{c+=escp(l).map(n=>String.fromCharCode(n)).join('')+' Tj\n';if(j<pg.length-1)c+='0 -15 Td\n'});c+='ET';objs[pids[i]]='<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents '+cids[i]+' 0 R >>';objs[cids[i]]='<< /Length '+c.length+' >>\nstream\n'+c+'\nendstream'});let out='%PDF-1.4\n';const offs=[0];for(let i=1;i<objs.length;i++){if(!objs[i])continue;offs[i]=out.length;out+=i+' 0 obj\n'+objs[i]+'\nendobj\n'}const x=out.length;out+='xref\n0 '+objs.length+'\n0000000000 65535 f \n';for(let i=1;i<objs.length;i++)out+=(String(offs[i]||0).padStart(10,'0'))+' 00000 n \n';out+='trailer\n<< /Size '+objs.length+' /Root 1 0 R >>\nstartxref\n'+x+'\n%%EOF';return new Blob([out],{type:'application/pdf'})}
+function openPdf(lines,name){const url=URL.createObjectURL(makeSimplePdf(lines));window.open(url,'_blank','noopener');setTimeout(()=>URL.revokeObjectURL(url),60000)}
+window.visualizarPDFTreinamento=function(){const sel=document.getElementById('rPatient'),p=arr(db.patients).find(x=>String(x.id)===String(sel?.value));if(!p)return alert('Selecione um paciente.');const rows=arr(db.trainingSchedules).filter(x=>String(x.patientId)===String(p.id)&&!x.cancelled).sort((a,b)=>Number(a.dayOfWeek)-Number(b.dayOfWeek));const tr=arr(db.training).filter(x=>String(x.patientId)===String(p.id));const ar=arr(db.aerobicLogs).filter(x=>String(x.patientId)===String(p.id));const lines=['MOVIMENT’ UP — TREINAMENTO RESISTIDO INCLUSIVO','Casa de David — Tabernáculo Espírita para Excepcionais','Paciente: '+(p.name||'—'),'Data: '+new Date().toLocaleDateString('pt-BR'),'','CRONOGRAMA DE TREINAMENTO'];rows.forEach(x=>lines.push((days[Number(x.dayOfWeek)]||'—')+' | '+(x.time||x.horario||'—')+' | '+(x.activity||((x.type||'')==='resistido'?'Treinamento Resistido':'Treinamento Aeróbico'))+' | '+(x.workout||x.modality||'—')));lines.push('','REGISTROS DE TREINAMENTO');tr.forEach(x=>lines.push((x.date||'—')+' | '+(x.workout||'—')+' | '+(x.exercise||x.modality||'—')+' | Carga: '+(x.loadPerformed??'—')+' | Tempo: '+(x.duration??'—')));ar.forEach(x=>lines.push((x.date||'—')+' | Aeróbico: '+(x.modality||'—')+' | Tempo: '+(x.duration??'—')+' | Distância: '+(x.distance??'—')+' | PACE: '+(x.pace||'—')));openPdf(lines,'Treinamento_'+(p.name||'Paciente')+'.pdf')};
+function init(){fillPatients();const s=document.getElementById('fdPatient');s?.addEventListener('change',()=>{window.currentTrainingPatientId=s.value;renderSchedule();renderAtt()})}
+window.addEventListener('load',()=>setTimeout(init,250));
+const oldShow=window.show;if(typeof oldShow==='function'){window.show=function(id){const r=oldShow.apply(this,arguments);if(id==='frequencyDaily')setTimeout(()=>{fillPatients();renderSchedule();renderAtt()},50);return r}}
 })();
 </script>
 
