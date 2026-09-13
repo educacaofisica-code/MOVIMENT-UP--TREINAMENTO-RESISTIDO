@@ -5659,5 +5659,367 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   }, true);
 })();
 </script>
+
+<script id="moviment-up-frequency-v5">
+(function(){
+  'use strict';
+
+  function arr(v){ return Array.isArray(v)?v:[]; }
+  function escF(v){
+    if(v==null)return '';
+    return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function isoF(d){
+    const x=new Date(d.getTime()-d.getTimezoneOffset()*60000);
+    return x.toISOString().slice(0,10);
+  }
+  function todayF(){ return isoF(new Date()); }
+  function statusF(x){
+    const s=String(x||'').toLowerCase();
+    return (s==='participou'||s==='compareceu'||s==='sim'||s==='presente')?'compareceu':'ausente';
+  }
+  function labelStatus(s){ return statusF(s)==='compareceu'?'COMPARECEU':'NÃO COMPARECEU'; }
+  function reasonRequired(status){ return statusF(status)==='ausente'; }
+
+  function schedulesF(pid){
+    return arr(db.trainingSchedules).filter(x=>String(x.patientId)===String(pid)&&!x.cancelled);
+  }
+  function attendanceF(pid){
+    return arr(db.trainingAttendance).filter(x=>String(x.patientId)===String(pid));
+  }
+  function trainingLogsF(pid){
+    return arr(db.training).filter(x=>String(x.patientId)===String(pid)&&(x.kind==='daily'||x.kind==null));
+  }
+  function aerobicLogsF(pid){
+    return arr(db.aerobicLogs).filter(x=>String(x.patientId)===String(pid));
+  }
+  function keyF(type,date,workout,modality){
+    return [type||'resistido',date||'',workout||'',modality||''].join('|');
+  }
+  function findAttendance(pid,type,date,workout,modality){
+    const key=keyF(type,date,workout,modality);
+    return attendanceF(pid).find(x=>{
+      const xt=x.type||'resistido';
+      return keyF(xt,x.date,x.workout,x.modality)===key;
+    });
+  }
+  function ensureAttendance(pid,type,date,workout,modality,status,reason,obs,professor){
+    if(!pid||!date)return null;
+    const existing=findAttendance(pid,type,date,workout,modality);
+    const normalized=statusF(status);
+    if(existing){
+      existing.type=type||existing.type||'resistido';
+      existing.workout=workout||existing.workout||'';
+      existing.modality=modality||existing.modality||'';
+      existing.status=normalized;
+      existing.reason=normalized==='ausente'?(reason||existing.reason||''):'';
+      existing.obs=obs??existing.obs??'';
+      existing.professor=professor||existing.professor||'';
+      existing.updatedAt=new Date().toISOString();
+      return existing;
+    }
+    const row={
+      id:typeof uid==='function'?uid('att'):('att_'+Date.now()+'_'+Math.random().toString(36).slice(2)),
+      patientId:pid,date,type:type||'resistido',workout:workout||'',modality:modality||'',
+      status:normalized,reason:normalized==='ausente'?(reason||''):'',
+      obs:obs||'',professor:professor||'',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()
+    };
+    if(!Array.isArray(db.trainingAttendance))db.trainingAttendance=[];
+    db.trainingAttendance.push(row);
+    return row;
+  }
+  function persistF(){ try{ if(typeof persist==='function')persist(); }catch(e){ console.warn(e); } }
+
+  /* Novo registro oficial: uma única escolha de presença/falta. */
+  window.v51SaveAttendance=function(){
+    if(!currentTrainingPatientId)return alert('Selecione o paciente.');
+    const date=document.getElementById('v51AttDate').value||todayF();
+    const type=document.getElementById('v51AttType').value;
+    const workout=type==='resistido'?document.getElementById('v51AttWorkout').value:'';
+    const modality=type==='aerobico'?document.getElementById('v51AttMod').value:'';
+    const status=document.getElementById('v51AttStatus').value;
+    const reason=document.getElementById('v51Reason').value;
+    const obs=document.getElementById('v51AttObs').value;
+    const professor=document.getElementById('v51AttProfessor').value;
+    if(reasonRequired(status)&&!reason)return alert('Selecione o motivo da falta antes de salvar.');
+    ensureAttendance(currentTrainingPatientId,type,date,workout,modality,status,reason,obs,professor);
+    persistF();
+    window.v51RenderAll();
+  };
+
+  window.v51EditAttendance=function(id){
+    const x=arr(db.trainingAttendance).find(v=>String(v.id)===String(id));
+    if(!x)return;
+    const type=x.type||'resistido';
+    const date=prompt('Data (AAAA-MM-DD):',x.date||todayF()); if(date===null)return;
+    const kind=prompt('Tipo (resistido/aerobico):',type); if(kind===null)return;
+    const t=String(kind).toLowerCase().startsWith('aero')?'aerobico':'resistido';
+    const activity=prompt(t==='resistido'?'Treino A/B/C/D/E:':'Modalidade:',t==='resistido'?(x.workout||'A'):(x.modality||'Esteira'));
+    if(activity===null)return;
+    const came=confirm('OK = COMPARECEU. Cancelar = NÃO COMPARECEU.');
+    let reason=x.reason||'';
+    if(!came){reason=prompt('Motivo da falta:',reason);if(reason===null||!reason.trim())return alert('O motivo é obrigatório.');}
+    const obs=prompt('Observação:',x.obs||'');if(obs===null)return;
+    Object.assign(x,{
+      date,
+      type:t,
+      workout:t==='resistido'?String(activity).toUpperCase():'',
+      modality:t==='aerobico'?String(activity):'',
+      status:came?'compareceu':'ausente',
+      reason:came?'':reason,
+      obs,
+      updatedAt:new Date().toISOString()
+    });
+    persistF();window.v51RenderAll();
+  };
+
+  window.v51DeleteAttendance=function(id){
+    if(!confirm('Apagar este registro de frequência?'))return;
+    db.trainingAttendance=arr(db.trainingAttendance).filter(x=>String(x.id)!==String(id));
+    persistF();window.v51RenderAll();
+  };
+
+  function dateRange(start,end){
+    const out=[];let d=new Date(start+'T12:00:00'),z=new Date(end+'T12:00:00');
+    while(d<=z){out.push(isoF(d));d.setDate(d.getDate()+1);}
+    return out;
+  }
+  function dayNameF(n){return ['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'][Number(n)]||'—';}
+
+  /* Calcula exclusivamente aulas previstas até hoje. Registro detalhado realizado
+     também vale como presença e evita obrigar o profissional a duplicar a informação. */
+  window.v51Calc=function(start,end){
+    const pid=currentTrainingPatientId;
+    let scheduled=0,present=0,absent=0,details=[];
+    if(!pid||!start||!end)return {scheduled:0,present:0,absent:0,part:0,abs:0,details:[]};
+    const today=todayF();
+    for(const date of dateRange(start,end)){
+      if(date>today)continue;
+      const planned=arr(db.trainingSchedules).filter(s=>String(s.patientId)===String(pid)&&!s.cancelled&&Number(s.dayOfWeek)===new Date(date+'T12:00:00').getDay());
+      for(const p of planned){
+        if(arr(db.trainingCancellations).some(c=>String(c.patientId)===String(pid)&&c.date===date))continue;
+        scheduled++;
+        const type=p.type||'resistido';
+        const workout=p.workout||'';
+        const modality=p.modality||'';
+        let rec=findAttendance(pid,type,date,workout,modality);
+        /* Compatibilidade com registros antigos e com os registros detalhados. */
+        if(!rec && type==='resistido'){
+          const log=trainingLogsF(pid).find(x=>x.date===date&&String(x.workout||'')===String(workout));
+          if(log)rec={status:'compareceu',reason:'',obs:'',source:'treino realizado',professor:log.professor};
+        }
+        if(!rec && type==='aerobico'){
+          const log=aerobicLogsF(pid).find(x=>x.date===date&&String(x.modality||'')===String(modality));
+          if(log)rec={status:'compareceu',reason:'',obs:'',source:'sessão aeróbica',professor:log.professor};
+        }
+        const s=rec?statusF(rec.status):'ausente';
+        if(s==='compareceu')present++; else absent++;
+        details.push({p,rec,date,status:s});
+      }
+    }
+    return {scheduled,present,absent,part:present,abs:absent,details};
+  };
+
+  function removeParticipationFromAerobicHistory(){
+    const host=document.querySelector('#historyContent .history-training-enhancement-host');
+    if(!host)return;
+    host.querySelectorAll('table').forEach(table=>{
+      const ths=Array.from(table.querySelectorAll('tr:first-child th'));
+      const idx=ths.findIndex(th=>/participa[çc][ãa]o/i.test(th.textContent||''));
+      if(idx>=0)Array.from(table.querySelectorAll('tr')).forEach(tr=>{if(tr.cells[idx])tr.deleteCell(idx);});
+    });
+  }
+
+  function frequencyHtml(pid){
+    const old=currentTrainingPatientId;
+    currentTrainingPatientId=pid;
+    const now=new Date(),start=isoF(new Date(now.getFullYear(),now.getMonth(),1)),end=isoF(new Date(now.getFullYear(),now.getMonth()+1,0));
+    const r=window.v51Calc(start,end);
+    currentTrainingPatientId=old;
+    const freq=r.scheduled?r.present/r.scheduled*100:0, absPct=r.scheduled?r.absent/r.scheduled*100:0;
+    const rows=r.details.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(x=>{
+      const activity=x.p.type==='resistido'?'Treino '+(x.p.workout||'—'):(x.p.modality||'—');
+      return '<tr><td>'+escF(typeof formatDate==='function'?formatDate(x.date):x.date)+'</td><td>'+escF(x.p.type==='resistido'?'Treinamento Resistido':'Treinamento Aeróbico')+'</td><td>'+escF(activity)+'</td><td class="'+(x.status==='compareceu'?'status-e':'status-r')+'">'+labelStatus(x.status)+'</td><td>'+escF(x.rec?.reason||x.rec?.obs||'—')+'</td></tr>';
+    }).join('');
+    return '<div class="card frequency-official-section"><h3>FREQUÊNCIA E ADESÃO AO TREINAMENTO</h3>'+
+      '<div class="freq-kpis"><div class="freq-kpi"><span>Aulas previstas</span><strong>'+r.scheduled+'</strong></div><div class="freq-kpi"><span>Compareceu</span><strong>'+r.present+'</strong></div><div class="freq-kpi"><span>Não compareceu</span><strong>'+r.absent+'</strong></div><div class="freq-kpi"><span>Frequência</span><strong>'+freq.toFixed(0)+'%</strong></div><div class="freq-kpi"><span>Ausência</span><strong>'+absPct.toFixed(0)+'%</strong></div></div>'+
+      (rows?'<h4>Registro diário</h4><table><tr><th>Data</th><th>Tipo</th><th>Atividade</th><th>Status</th><th>Motivo / observação</th></tr>'+rows+'</table>':'<p class="muted">Nenhuma aula prevista no período.</p>')+
+      '</div>';
+  }
+
+  function transformFrequencyUI(){
+    const wrap=document.getElementById('v41FrequencyUI');
+    if(!wrap||wrap.dataset.v51==='1')return;
+    const cards=Array.from(wrap.querySelectorAll('.card'));
+    const oldFreq=cards.find(c=>c.querySelector('#v41AttStatus'));
+    if(!oldFreq)return;
+    wrap.dataset.v51='1';
+
+    oldFreq.innerHTML='<div class="section-head"><h2>Registro diário de frequência</h2><span class="muted small">Registre diretamente se o paciente compareceu ou não compareceu à atividade prevista.</span></div>'+
+      '<div class="grid">'+
+      '<label>Data<input type="date" id="v51AttDate" value="'+todayF()+'"></label>'+
+      '<label>Tipo<select id="v51AttType" onchange="v51ToggleActivity()"><option value="resistido">Treinamento Resistido</option><option value="aerobico">Treinamento Aeróbico</option></select></label>'+
+      '<label id="v51WorkoutWrap">Treino<select id="v51AttWorkout"><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option></select></label>'+
+      '<label id="v51ModWrap" class="hidden">Modalidade<select id="v51AttMod"><option>Esteira</option><option>Elíptico</option><option>Bicicleta ergométrica</option><option>Funcional MMSS</option><option>Funcional MMII</option><option>Funcional Completo</option><option>Outra</option></select></label>'+
+      '<label>Status<select id="v51AttStatus" onchange="v51ToggleReason()"><option value="compareceu">COMPARECEU</option><option value="ausente">NÃO COMPARECEU</option></select></label>'+
+      '<label>Professor<select id="v51AttProfessor"><option>Fabiana Q. Sartori</option><option>Bruno Sartori</option><option>Sabrina Melo</option><option>Janaína de Moraes</option><option>Layza Rodrigues</option><option>Mikael Caitano</option></select></label>'+
+      '</div><div id="v51Absence" class="hidden"><div class="grid"><label>Motivo da falta<select id="v51Reason"><option value="">Selecione</option><option>Restrição da Enfermagem</option><option>Doença</option><option>Saída Externa</option><option>Cansado / Indisposto</option><option>Recusa do Paciente</option><option>Consulta / Atendimento</option><option>Compromisso Institucional</option><option>Internação / Hospitalização</option><option>Ausência não justificada</option><option>Outro</option></select></label><label>Observação<textarea id="v51AttObs" placeholder="Informe o motivo ou qualquer observação relevante."></textarea></label></div></div>'+
+      '<div class="actions"><button class="btn" onclick="v51SaveAttendance()">Salvar frequência</button></div><div id="v51AttTable"></div>';
+    window.v51ToggleActivity();
+    window.v51ToggleReason();
+    window.v51RenderAll();
+  }
+
+  window.v51ToggleActivity=function(){
+    const t=document.getElementById('v51AttType'); if(!t)return;
+    const aero=t.value==='aerobico';
+    document.getElementById('v51WorkoutWrap')?.classList.toggle('hidden',aero);
+    document.getElementById('v51ModWrap')?.classList.toggle('hidden',!aero);
+  };
+  window.v51ToggleReason=function(){
+    const s=document.getElementById('v51AttStatus'); if(!s)return;
+    document.getElementById('v51Absence')?.classList.toggle('hidden',s.value!=='ausente');
+  };
+
+  window.v51RenderAll=function(){
+    const pid=currentTrainingPatientId;if(!pid)return;
+    const wrap=document.getElementById('v41FrequencyUI');if(!wrap)return;
+    const st=document.getElementById('v41ScheduleTable');
+    if(st){
+      const ss=schedulesF(pid).sort((a,b)=>Number(a.dayOfWeek)-Number(b.dayOfWeek));
+      st.innerHTML=ss.length?'<table><tr><th>Dia</th><th>Tipo</th><th>Atividade</th><th>Ação</th></tr>'+
+        ss.map(x=>'<tr><td>'+dayNameF(x.dayOfWeek)+'</td><td>'+(x.type==='resistido'?'Treinamento Resistido':'Treinamento Aeróbico')+'</td><td>'+escF(x.workout||x.modality||'—')+'</td><td><button class="btn danger" onclick="v41RemoveSchedule(\''+escF(x.id)+'\')">Excluir</button></td></tr>').join('')+'</table>':'<p class="muted">Nenhuma atividade programada.</p>';
+    }
+    const at=document.getElementById('v51AttTable');
+    if(at){
+      const aa=attendanceF(pid).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+      at.innerHTML=aa.length?'<h3>Registros de frequência</h3><table><tr><th>Data</th><th>Tipo</th><th>Atividade</th><th>Status</th><th>Motivo / observação</th><th>Professor</th><th>Ações</th></tr>'+
+        aa.map(x=>'<tr><td>'+escF(typeof formatDate==='function'?formatDate(x.date):x.date)+'</td><td>'+escF((x.type||'resistido')==='resistido'?'Treinamento Resistido':'Treinamento Aeróbico')+'</td><td>'+escF(x.workout||x.modality||'—')+'</td><td class="'+(statusF(x.status)==='compareceu'?'status-e':'status-r')+'">'+labelStatus(x.status)+'</td><td>'+escF([x.reason,x.obs].filter(Boolean).join(' — ')||'—')+'</td><td>'+escF(x.professor||'—')+'</td><td><button class="btn secondary" onclick="v51EditAttendance(\''+escF(x.id)+'\')">Editar</button> <button class="btn danger" onclick="v51DeleteAttendance(\''+escF(x.id)+'\')">Apagar</button></td></tr>').join('')+'</table>':'<p class="muted">Nenhum registro de frequência.</p>';
+    }
+    const metric=document.getElementById('v41Metrics');
+    if(metric){
+      const stEl=document.getElementById('v41Start'),enEl=document.getElementById('v41End');
+      const now=new Date();
+      if(!stEl.value)stEl.value=isoF(new Date(now.getFullYear(),now.getMonth(),1));
+      if(!enEl.value)enEl.value=isoF(new Date(now.getFullYear(),now.getMonth()+1,0));
+      const r=window.v51Calc(stEl.value,enEl.value),freq=r.scheduled?r.present/r.scheduled*100:0,absPct=r.scheduled?r.absent/r.scheduled*100:0;
+      const res=r.details.filter(x=>(x.p.type||'resistido')==='resistido'),aer=r.details.filter(x=>x.p.type==='aerobico');
+      const reasons={};r.details.filter(x=>x.status==='ausente').forEach(x=>{const k=x.rec?.reason||'Sem motivo informado';reasons[k]=(reasons[k]||0)+1;});
+      metric.innerHTML='<div class="freq-kpis"><div class="freq-kpi"><span>Aulas previstas</span><strong>'+r.scheduled+'</strong></div><div class="freq-kpi"><span>Compareceu</span><strong>'+r.present+'</strong></div><div class="freq-kpi"><span>Não compareceu</span><strong>'+r.absent+'</strong></div><div class="freq-kpi"><span>Frequência</span><strong>'+freq.toFixed(0)+'%</strong></div><div class="freq-kpi"><span>Ausência</span><strong>'+absPct.toFixed(0)+'%</strong></div></div>'+
+        '<h3>Treinamento Resistido</h3><p>Previstas: '+res.length+' | Compareceu: '+res.filter(x=>x.status==='compareceu').length+' | Não compareceu: '+res.filter(x=>x.status==='ausente').length+' | Frequência: '+(res.length?((res.filter(x=>x.status==='compareceu').length/res.length)*100).toFixed(0):0)+'%</p>'+
+        '<h3>Treinamento Aeróbico</h3><p>Previstas: '+aer.length+' | Compareceu: '+aer.filter(x=>x.status==='compareceu').length+' | Não compareceu: '+aer.filter(x=>x.status==='ausente').length+' | Frequência: '+(aer.length?((aer.filter(x=>x.status==='compareceu').length/aer.length)*100).toFixed(0):0)+'%</p>'+
+        '<h3>Motivos das faltas</h3>'+(Object.keys(reasons).length?'<table><tr><th>Motivo</th><th>Quantidade</th><th>% das faltas</th></tr>'+Object.entries(reasons).map(([k,v])=>'<tr><td>'+escF(k)+'</td><td>'+v+'</td><td>'+((v/r.absent)*100).toFixed(0)+'%</td></tr>').join('')+'</table>':'<p class="muted">Nenhuma falta registrada no período.</p>');
+    }
+    window.v51ToggleActivity();window.v51ToggleReason();
+  };
+
+  /* Substitui os textos antigos na interface, sem apagar dados antigos. */
+  function patchVisibleText(){
+    const wrap=document.getElementById('v41FrequencyUI');if(!wrap)return;
+    wrap.querySelectorAll('*').forEach(el=>{
+      if(el.children.length===0){
+        if(el.textContent==='Frequência diária — treinamento resistido')el.textContent='Registro diário de frequência';
+        if(el.textContent==='Data + treino A/B/C/D/E + participação.')el.textContent='Registre se o paciente compareceu ou não compareceu.';
+      }
+    });
+  }
+
+  /* Se o profissional registra o treino detalhado, a presença é criada/atualizada
+     automaticamente — não há necessidade de registrar a mesma presença duas vezes. */
+  const oldDaily=window.saveDailyTraining;
+  if(typeof oldDaily==='function'&&!window.__v51DailyPatched){
+    window.__v51DailyPatched=true;
+    window.saveDailyTraining=function(){
+      const pid=currentTrainingPatientId,date=document.getElementById('logDate')?.value||todayF(),workout=document.getElementById('logWorkout')?.value||'';
+      const result=oldDaily.apply(this,arguments);
+      if(pid&&workout){
+        ensureAttendance(pid,'resistido',date,workout,'','compareceu','',document.getElementById('logObs')?.value||'',document.getElementById('tProfessor')?.value||'');
+        persistF();setTimeout(()=>window.v51RenderAll(),0);
+      }
+      return result;
+    };
+  }
+
+  const oldAer=window.v41SaveAerobic;
+  if(typeof oldAer==='function'&&!window.__v51AerPatched){
+    window.__v51AerPatched=true;
+    window.v41SaveAerobic=function(){
+      const pid=currentTrainingPatientId,date=document.getElementById('v41AerDate')?.value||todayF(),mod=document.getElementById('v41AerMod')?.value||'';
+      const result=oldAer.apply(this,arguments);
+      if(pid&&mod){
+        ensureAttendance(pid,'aerobico',date,'',mod,'compareceu','',document.getElementById('v41AerObs')?.value||'',document.getElementById('tProfessor')?.value||'');
+        persistF();setTimeout(()=>window.v51RenderAll(),0);
+      }
+      return result;
+    };
+  }
+
+  /* Histórico / Evolução: acrescenta a frequência oficial e remove a coluna
+     antiga "Participação" dos registros aeróbicos. */
+  const oldHistory=window.renderHistory;
+  if(typeof oldHistory==='function'&&!window.__v51HistoryPatched){
+    window.__v51HistoryPatched=true;
+    window.renderHistory=function(){
+      const r=oldHistory.apply(this,arguments);
+      const pid=document.getElementById('hPatient')?.value;
+      if(pid){
+        const host=document.querySelector('#historyContent .history-training-enhancement-host');
+        if(host){
+          host.querySelectorAll('.frequency-official-section').forEach(x=>x.remove());
+          host.insertAdjacentHTML('beforeend',frequencyHtml(pid));
+          removeParticipationFromAerobicHistory();
+        }
+      }
+      return r;
+    };
+  }
+
+  /* Editor do histórico: remove o antigo campo Participação do treino aeróbico. */
+  const oldEditHistory=window.editHistoryTrainingLog;
+  if(typeof oldEditHistory==='function'&&!window.__v51EditHistoryPatched){
+    window.__v51EditHistoryPatched=true;
+    window.editHistoryTrainingLog=function(id){
+      const r=oldEditHistory.apply(this,arguments);
+      setTimeout(()=>{
+        const field=document.getElementById('he_participation');
+        if(field){
+          const label=field.closest('label');
+          if(label)label.remove();
+        }
+      },0);
+      return r;
+    };
+  }
+
+  /* Relatório/PDF: inclui o mesmo resumo e o registro diário oficial. */
+  const oldReport=window.renderReport;
+  if(typeof oldReport==='function'&&!window.__v51ReportPatched){
+    window.__v51ReportPatched=true;
+    window.renderReport=function(){
+      const r=oldReport.apply(this,arguments);
+      const pid=document.getElementById('rPatient')?.value,el=document.getElementById('reportContent');
+      if(pid&&el){
+        el.querySelectorAll('.frequency-official-section').forEach(x=>x.remove());
+        el.insertAdjacentHTML('beforeend',frequencyHtml(pid));
+      }
+      return r;
+    };
+  }
+
+  /* Garante que o cronograma, a frequência e os registros detalhados continuem
+     sincronizados e preserva o armazenamento/Supabase já existente. */
+  function boot(){
+    setTimeout(()=>{
+      transformFrequencyUI();
+      patchVisibleText();
+      if(typeof window.v51RenderAll==='function'&&currentTrainingPatientId)window.v51RenderAll();
+    },350);
+  }
+  document.addEventListener('DOMContentLoaded',boot);
+  window.addEventListener('load',boot);
+
+})();
+</script>
+
 </body>
 </html>
