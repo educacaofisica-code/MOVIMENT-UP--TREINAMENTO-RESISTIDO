@@ -6653,5 +6653,157 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 .fd-weekly-edit textarea{width:100%;min-height:110px;border:1px solid #a9d5e5;border-radius:7px;padding:9px;font-family:inherit;resize:vertical}
 .fd-weekly-item .actions{margin-top:9px}
 </style>
+
+<script id="v112-cancel-layout-final">
+(function(){
+'use strict';
+const A=v=>Array.isArray(v)?v:[];
+const dbx=()=>window.db||{};
+const esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+const days=['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
+const today=()=>new Date().toISOString().slice(0,10);
+function persist(){try{if(typeof window.persist==='function')window.persist();}catch(e){console.warn(e)}}
+function pid(){return document.getElementById('fdPatient')?.value||window.currentTrainingPatientId||''}
+function patient(){return A(dbx().patients).find(p=>String(p.id)===String(pid()))||null}
+function schedules(pid){return A(dbx().trainingSchedules).filter(s=>String(s.patientId)===String(pid)&&!s.cancelled).sort((a,b)=>Number(a.dayOfWeek)-Number(b.dayOfWeek)||String(a.time||a.horario||'').localeCompare(String(b.time||b.horario||'')))}
+function cancellations(pid){return A(dbx().trainingCancellations).filter(c=>String(c.patientId)===String(pid))}
+function occurrenceDate(day){
+  const base=document.getElementById('fdDate')?.value||today();
+  const d=new Date(base+'T12:00:00'); const target=Number(day); let delta=(target-d.getDay()+7)%7;
+  if(delta===0 && base<today()) delta=7;
+  d.setDate(d.getDate()+delta);
+  return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);
+}
+function cancelFor(s,date){
+  return cancellations(pid()).find(c=>String(c.date)===String(date)&&(c.scheduleId?String(c.scheduleId)===String(s.id):true));
+}
+function isCancelledFor(s,date){return !!cancelFor(s,date)}
+function ensureCancelArray(){if(!Array.isArray(dbx().trainingCancellations))dbx().trainingCancellations=[]}
+function showModal(s){
+  ensureCancelArray();
+  let m=document.getElementById('v112CancelModal');
+  if(!m){
+    m=document.createElement('div');m.id='v112CancelModal';m.className='v112-modal';
+    m.innerHTML=`<div class="v112-modal-box"><div class="v112-modal-head"><div><h3>Cancelar aula</h3><p>A aula cancelada não será contabilizada como falta do paciente.</p></div><button type="button" class="v112-x" onclick="v112CloseCancel()">×</button></div><div class="v112-grid"><label>Data da aula<input id="v112CancelDate" type="date"></label><label>Horário<input id="v112CancelTime" type="time"></label><label>Atividade<input id="v112CancelActivity" readonly></label><label>Treino / Subcategoria<input id="v112CancelWorkout" readonly></label><label>Professor responsável<select id="v112CancelProfessor"></select></label><label>Motivo do cancelamento<select id="v112CancelReason"><option value="">Selecione</option><option>Feriado</option><option>Cancelamento institucional</option><option>Manutenção do espaço</option><option>Evento institucional</option><option>Falta do professor</option><option>Problema operacional</option><option>Outro</option></select></label><label class="v112-full">Observação<textarea id="v112CancelObs" rows="3" placeholder="Detalhes do cancelamento..."></textarea></label></div><div class="v112-actions"><button type="button" class="btn" onclick="v112ConfirmCancel()">CONFIRMAR CANCELAMENTO</button><button type="button" class="btn secondary" onclick="v112CloseCancel()">CANCELAR</button></div></div>`;
+    document.body.appendChild(m);
+    const profs=['Fabiana Q. Sartori','Bruno Sartori','Sabrina Melo','Janaína de Moraes','Layza Rodrigues','Mikael Caitano'];
+    document.getElementById('v112CancelProfessor').innerHTML=profs.map(n=>`<option>${esc(n)}</option>`).join('');
+  }
+  m.dataset.scheduleId=String(s.id);m.dataset.patientId=String(pid());m.classList.add('open');
+  document.getElementById('v112CancelDate').value=occurrenceDate(s.dayOfWeek);
+  document.getElementById('v112CancelTime').value=s.time||s.horario||'';
+  document.getElementById('v112CancelActivity').value=s.activity||((s.type||'')==='resistido'?'Treinamento Resistido':(s.modality||'Programa / Projeto'));
+  document.getElementById('v112CancelWorkout').value=s.workout||s.subcategory||s.modality||'—';
+  const existing=cancelFor(s,document.getElementById('v112CancelDate').value);
+  document.getElementById('v112CancelReason').value=existing?.reason||'';
+  document.getElementById('v112CancelObs').value=existing?.obs||'';
+  document.getElementById('v112CancelProfessor').value=existing?.professor||document.getElementById('headerProfessor')?.value||'Fabiana Q. Sartori';
+}
+window.v112OpenCancel=showModal;
+window.v112OpenCancelById=function(id){const s=A(dbx().trainingSchedules).find(x=>String(x.id)===String(id));if(s)showModal(s)};
+window.v112CloseCancel=function(){document.getElementById('v112CancelModal')?.classList.remove('open')};
+window.v112ConfirmCancel=function(){
+  const m=document.getElementById('v112CancelModal');if(!m)return;
+  const p=patient();if(!p)return alert('Selecione o paciente.');
+  const date=document.getElementById('v112CancelDate').value;if(!date)return alert('Informe a data da aula.');
+  const reason=document.getElementById('v112CancelReason').value;if(!reason)return alert('Informe o motivo do cancelamento.');
+  ensureCancelArray();const sid=m.dataset.scheduleId;
+  const row={scheduleId:sid,patientId:p.id,date,time:document.getElementById('v112CancelTime').value||'',activity:document.getElementById('v112CancelActivity').value||'',workout:document.getElementById('v112CancelWorkout').value||'',reason,obs:document.getElementById('v112CancelObs').value.trim(),professor:document.getElementById('v112CancelProfessor').value||'',status:'cancelada',updatedAt:new Date().toISOString()};
+  const idx=dbx().trainingCancellations.findIndex(c=>String(c.patientId)===String(p.id)&&String(c.date)===String(date)&&String(c.scheduleId||'')===String(sid));
+  if(idx>=0)dbx().trainingCancellations[idx]=Object.assign(dbx().trainingCancellations[idx],row);else dbx().trainingCancellations.push({id:typeof uid==='function'?uid('can'):('can_'+Date.now()),...row,createdAt:new Date().toISOString()});
+  persist();v112CloseCancel();refresh();
+};
+window.v112DeleteCancel=function(id){if(!confirm('Excluir o cancelamento desta aula? A aula voltará a ser considerada programada.'))return;dbx().trainingCancellations=A(dbx().trainingCancellations).filter(c=>String(c.id)!==String(id));persist();refresh()};
+function renderSchedule(){
+  const host=document.getElementById('fdScheduleTable'),p=patient();if(!host)return;
+  if(!p){host.innerHTML='<div class="notice">Selecione um paciente para visualizar o cronograma semanal.</div>';return}
+  const rows=schedules(p.id);
+  const selectedDate=document.getElementById('fdDate')?.value||today();
+  const html=rows.length?`<div class="fd-current-title">CRONOGRAMA SEMANAL DO PACIENTE</div><div class="muted small">Cada atendimento pode ser editado, excluído ou cancelado individualmente.</div><div class="fd-record-table"><table><thead><tr><th>Dia</th><th>Horário</th><th>Atividade</th><th>Treino / Subcategoria</th><th>Status na data</th><th>Ações</th></tr></thead><tbody>${rows.map(s=>{const date=occurrenceDate(s.dayOfWeek),c=cancelFor(s,date);const status=c?'AULA CANCELADA':'PROGRAMADA';return `<tr><td>${days[Number(s.dayOfWeek)]||'—'}</td><td>${esc(s.time||s.horario||'—')}</td><td>${esc(s.activity||((s.type||'')==='resistido'?'Treinamento Resistido':(s.modality||'Programa / Projeto')))}</td><td>${esc(s.workout||s.subcategory||s.modality||'—')}</td><td class="${c?'fd-status-cancelled':'fd-status-planned'}">${status}${c?`<div class="cancel-reason">${esc(c.reason)}</div>`:''}</td><td><button type="button" class="btn secondary" onclick="fdEditScheduleX('${esc(s.id)}')">Editar</button> <button type="button" class="btn danger" onclick="fdDeleteScheduleX('${esc(s.id)}')">Excluir</button> <button type="button" class="btn cancel-btn" onclick="v112OpenCancelById('${esc(s.id)}')">Cancelar Aula</button></td></tr>`}).join('')}</tbody></table></div>`:'<div class="notice">Nenhum cronograma cadastrado para este paciente.</div>';
+  host.innerHTML=html;
+}
+function plannedX(pid,start,end){
+  const out=[],ss=schedules(pid),d0=new Date(start+'T12:00:00'),z=new Date(end+'T12:00:00'),now=today();
+  for(let d=new Date(d0);d<=z;d.setDate(d.getDate()+1)){const date=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);if(date>now)break;const dow=d.getDay();ss.filter(s=>Number(s.dayOfWeek)===dow).forEach(s=>{if(!isCancelledFor(s,date))out.push({date,s})})}
+  return out;
+}
+function metrics(){
+  const p=patient();if(!p)return {planned:0,present:0,abs:0,cancelled:0,eligible:0,freq:0,absence:0,start:today(),end:today()};
+  const d=new Date(),start=new Date(d.getFullYear(),d.getMonth(),1),end=new Date(d.getFullYear(),d.getMonth()+1,0);const st=new Date(start.getTime()-start.getTimezoneOffset()*60000).toISOString().slice(0,10),en=new Date(end.getTime()-end.getTimezoneOffset()*60000).toISOString().slice(0,10);
+  let planned=0,present=0,abs=0,cancelled=0;const ss=schedules(p.id), att=A(dbx().trainingAttendance).filter(a=>String(a.patientId)===String(p.id));
+  for(let dt=new Date(st+'T12:00:00');dt<=new Date(en+'T12:00:00');dt.setDate(dt.getDate()+1)){const date=new Date(dt.getTime()-dt.getTimezoneOffset()*60000).toISOString().slice(0,10);if(date>today())break;ss.filter(s=>Number(s.dayOfWeek)===dt.getDay()).forEach(s=>{if(isCancelledFor(s,date)){cancelled++;return}planned++;const a=att.find(x=>String(x.date)===date&&String(x.type||'resistido')===String(s.type||'resistido')&&((s.type||'resistido')==='resistido'?String(x.workout||'')===String(s.workout||''):String(x.modality||s.activity||'')===String(s.modality||s.activity||'')));if(a&&/^(compareceu|participou|presente)$/i.test(String(a.status||'')))present++;else abs++})}
+  const eligible=planned,freq=eligible?present/eligible*100:0,absence=eligible?abs/eligible*100:0;return {planned,present,abs,cancelled,eligible,freq,absence,start:st,end:en};
+}
+function renderMetrics(){
+  const host=document.getElementById('fdMetrics');if(!host)return;const p=patient();if(!p){host.innerHTML='<div class="notice">Selecione um paciente para calcular a frequência e adesão.</div>';return}const m=metrics();const cls=m.freq>=90?'Excelente':m.freq>=75?'Boa':m.freq>=60?'Moderada':'Baixa';host.innerHTML=`<div class="fd-final-kpis v112-kpis"><div class="kpi-blue"><span>Aulas programadas</span><strong>${m.planned+m.cancelled}</strong></div><div class="kpi-green"><span>Comparecimentos</span><strong>${m.present}</strong></div><div class="kpi-orange"><span>Não comparecimentos</span><strong>${m.abs}</strong></div><div class="kpi-red"><span>Aulas canceladas</span><strong>${m.cancelled}</strong></div><div class="kpi-purple"><span>Frequência efetiva</span><strong>${m.freq.toFixed(1)}%</strong></div><div class="kpi-violet"><span>Ausência efetiva</span><strong>${m.absence.toFixed(1)}%</strong></div></div><div class="fd-classification">Frequência efetiva: <b>${cls}</b> · Cálculo: comparecimentos ÷ (aulas programadas − aulas canceladas).</div>`;
+}
+function renderCancelledRecords(){
+  const host=document.getElementById('fdDailyRecords');if(!host)return;const p=patient();if(!p)return;const date=document.getElementById('fdDate')?.value||today();const cs=cancellations(p.id).filter(c=>String(c.date)===String(date));if(!cs.length)return;
+  const box=document.createElement('div');box.className='v112-cancel-list';box.innerHTML='<h4>AULAS CANCELADAS NA DATA</h4>'+cs.map(c=>`<div class="v112-cancel-row"><div><b>AULA CANCELADA</b><span>${esc(c.time||'—')} · ${esc(c.activity||'—')} · ${esc(c.workout||'—')}</span><small>Motivo: ${esc(c.reason||'—')}${c.obs?' · '+esc(c.obs):''}</small></div><button class="btn danger" type="button" onclick="v112DeleteCancel('${esc(c.id)}')">Excluir cancelamento</button></div>`).join('');host.prepend(box);
+}
+function reorder(){
+  const sec=document.getElementById('frequencyDaily');if(!sec)return;const cards=Array.from(sec.querySelectorAll(':scope > .card'));const find=t=>cards.find(c=>(c.textContent||'').toUpperCase().includes(t));const patientCard=find('FREQUÊNCIA DIÁRIA');const scheduleCard=find('CRONOGRAMA DE TREINAMENTO');const desc=document.getElementById('fdWeeklyTrainingDescription');const resist=find('REGISTRO DIÁRIO – TREINAMENTO RESISTIDO');const aer=find('REGISTRO DIÁRIO – TREINAMENTO AERÓBICO');const prog=find('REGISTRO DIÁRIO – PROGRAMAS E PROJETOS');const records=find('REGISTROS DO DIA');const patients=find('PACIENTES DO DIA');const metrics=find('FREQUÊNCIA E ADESÃO');[patientCard,scheduleCard,desc,resist,aer,prog,records,patients,metrics].filter(Boolean).forEach(x=>sec.appendChild(x));
+}
+function refresh(){
+  if(!document.getElementById('frequencyDaily'))return;
+  try{renderSchedule();if(typeof window.renderWeeklyTrainingDescriptionX==='function')window.renderWeeklyTrainingDescriptionX();if(typeof window.renderRecordsX==='function')window.renderRecordsX();if(typeof window.renderPatientsDayX==='function')window.renderPatientsDayX();renderMetrics();renderCancelledRecords();reorder()}catch(e){console.warn('V112',e)}
+}
+// Remove the old standalone cancellation card from every location; cancellation is exclusively here.
+function removeOldCancel(){document.querySelectorAll('#v41CancelCard').forEach(e=>e.remove());}
+function cleanTrainingDaily(){const tr=document.getElementById('training');if(!tr)return;tr.querySelectorAll('#v41FrequencyUI,#legacyDailyTraining').forEach(e=>e.remove());const log=document.getElementById('logDate');if(log){const c=log.closest('.card');if(c)c.remove();}}
+// Override old metric source so all existing consumers use cancellation-aware planning.
+const oldPlanned=window.plannedRecordsX;
+window.plannedRecordsX=function(pid,start,end){return plannedX(pid,start,end)};
+// Rebuild frequency PDF as a printable, photo-aware report, including cancellations separately.
+window.fdGenerateFrequencyPDFX=function(){
+  const p=patient();if(!p)return alert('Selecione um paciente.');const m=metrics(),ss=schedules(p.id),cs=cancellations(p.id).slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))),att=A(dbx().trainingAttendance).filter(a=>String(a.patientId)===String(p.id)).sort((a,b)=>String(a.date).localeCompare(String(b.date))),aer=A(dbx().aerobicLogs).filter(a=>String(a.patientId)===String(p.id)&&a.__dailyFrequency===true).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const logo='logo.png', photo=p.photo||'';
+  const rowS=ss.map(s=>`<tr><td>${esc(days[Number(s.dayOfWeek)]||'—')}</td><td>${esc(s.time||s.horario||'—')}</td><td>${esc(s.activity||s.modality||'—')}</td><td>${esc(s.workout||s.subcategory||s.modality||'—')}</td></tr>`).join('');
+  const rowA=att.map(a=>`<tr><td>${esc(a.date||'—')}</td><td>${esc(a.time||a.horario||'—')}</td><td>${esc(a.type==='resistido'?'Treinamento Resistido':(a.activity||a.modality||'Programa / Projeto'))}</td><td>${esc(a.workout||a.subcategory||a.modality||'—')}</td><td><b>${/^(compareceu|participou|presente)$/i.test(String(a.status||''))?'COMPARECEU':'NÃO COMPARECEU'}</b></td><td>${esc([a.reason,a.obs].filter(Boolean).join(' — ')||'—')}</td><td>${esc(a.professor||'—')}</td></tr>`).join('');
+  const rowC=cs.map(c=>`<tr><td>${esc(c.date)}</td><td>${esc(c.time||'—')}</td><td>${esc(c.activity||'—')}</td><td>${esc(c.workout||'—')}</td><td><b>AULA CANCELADA</b></td><td>${esc([c.reason,c.obs].filter(Boolean).join(' — ')||'—')}</td><td>${esc(c.professor||'—')}</td></tr>`).join('');
+  const rowAe=aer.map(a=>`<tr><td>${esc(a.date||'—')}</td><td>${esc(a.modality||'—')}</td><td>${esc(a.duration??'—')}</td><td>${esc(a.distance??'—')}</td><td>${esc(a.speed??'—')}</td><td>${esc(a.pace||'—')}</td><td>${esc(a.fcAvg??'—')}</td><td>${esc(a.incline??'—')}</td><td>${esc(a.professor||'—')}</td></tr>`).join('');
+  const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Frequência — ${esc(p.name)}</title><style>@page{size:A4;margin:10mm}body{font-family:Arial,sans-serif;color:#17324d;font-size:10px}h1{color:#0753aa;margin:0;font-size:22px}h2{color:#e05288;border-bottom:2px solid #e05288;padding-bottom:4px;margin-top:16px}table{width:100%;border-collapse:collapse;margin:7px 0 12px}th,td{border:1px solid #c9dce7;padding:4px;text-align:left}th{background:#eaf4ff}.head{display:flex;gap:14px;align-items:center;border-bottom:3px solid #075fc7;padding-bottom:8px}.logo{width:145px;max-height:65px;object-fit:contain}.patient{display:flex;gap:12px;align-items:center;margin:10px 0}.patient img{width:72px;height:72px;border-radius:50%;object-fit:cover;border:3px solid #e05288}.no{width:72px;height:72px;border-radius:50%;background:#e9f8fc;border:2px solid #c1e6f0;display:flex;align-items:center;justify-content:center;text-align:center}.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.kpi{padding:8px;border-radius:7px;border:1px solid #cfe0ea}.kpi b{display:block;font-size:16px;color:#0753aa}.cancel td{background:#fff0f3}.small{color:#5c7080}</style></head><body><div class="head"><img class="logo" src="${logo}" alt="Casa de David"><div><h1>CASA DE DAVID</h1><div>Moviment’ Up — Treinamento Resistido</div><div><b>RELATÓRIO DE FREQUÊNCIA DIÁRIA</b></div></div></div><div class="patient">${photo?`<img src="${photo}" alt="Foto do paciente">`:'<div class="no">SEM<br>FOTO</div>'}<div><h2 style="border:0;margin:0">${esc(p.name)}</h2><div>Unidade: ${esc(p.unit||'—')}</div><div>Período: ${esc(m.start)} a ${esc(m.end)}</div></div></div><h2>CRONOGRAMA SEMANAL</h2><table><tr><th>Dia</th><th>Horário</th><th>Atividade</th><th>Treino/Subcategoria</th></tr>${rowS||'<tr><td colspan="4">Nenhum cronograma cadastrado.</td></tr>'}</table><h2>REGISTROS DE FREQUÊNCIA</h2><table><tr><th>Data</th><th>Horário</th><th>Atividade</th><th>Treino/Subcategoria</th><th>Status</th><th>Motivo/Observação</th><th>Professor</th></tr>${rowA||'<tr><td colspan="7">Nenhum registro.</td></tr>'}</table><h2>AULAS CANCELADAS</h2><table class="cancel"><tr><th>Data</th><th>Horário</th><th>Atividade</th><th>Treino/Subcategoria</th><th>Status</th><th>Motivo/Observação</th><th>Professor</th></tr>${rowC||'<tr><td colspan="7">Nenhuma aula cancelada.</td></tr>'}</table><h2>REGISTRO DIÁRIO — TREINAMENTO AERÓBICO</h2><table><tr><th>Data</th><th>Modalidade</th><th>Tempo</th><th>Distância</th><th>Velocidade</th><th>PACE</th><th>FC</th><th>Inclinação</th><th>Professor</th></tr>${rowAe||'<tr><td colspan="9">Nenhum registro.</td></tr>'}</table><h2>MÉTRICAS</h2><div class="kpis"><div class="kpi">Aulas programadas<b>${m.planned+m.cancelled}</b></div><div class="kpi">Comparecimentos<b>${m.present}</b></div><div class="kpi">Não comparecimentos<b>${m.abs}</b></div><div class="kpi">Aulas canceladas<b>${m.cancelled}</b></div><div class="kpi">Frequência efetiva<b>${m.freq.toFixed(1)}%</b></div><div class="kpi">Ausência efetiva<b>${m.absence.toFixed(1)}%</b></div></div><p class="small">Frequência efetiva = comparecimentos ÷ (aulas programadas − aulas canceladas) × 100.</p></body></html>`;
+  const w=window.open('','_blank','width=1000,height=800');if(!w)return alert('Permita pop-ups para gerar o PDF.');w.document.open();w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);
+};
+function boot(){removeOldCancel();cleanTrainingDaily();reorder();refresh();}
+const oldShow=window.show;if(typeof oldShow==='function'&&!window.__v112Show){window.__v112Show=true;window.show=function(id){const r=oldShow.apply(this,arguments);if(id==='frequencyDaily')setTimeout(boot,80);if(id==='training')setTimeout(()=>{removeOldCancel();cleanTrainingDaily()},50);return r}}
+const mo=new MutationObserver(()=>{removeOldCancel();cleanTrainingDaily();if(document.getElementById('frequencyDaily')?.classList.contains('active')){reorder();renderSchedule();renderMetrics()}});mo.observe(document.body,{childList:true,subtree:true});
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,500));else setTimeout(boot,500);
+})();
+</script>
+<style id="v112-colorful-frequency">
+#frequencyDaily{background:linear-gradient(180deg,#f8fcff 0%,#fff 100%)}
+#frequencyDaily>.card{border-radius:12px;box-shadow:0 2px 9px rgba(7,83,170,.08);overflow:hidden}
+#frequencyDaily>.card:nth-of-type(odd){border-color:#b9dff0}
+#frequencyDaily>.card:nth-of-type(even){border-color:#f1bfd2}
+#frequencyDaily .section-head{background:linear-gradient(90deg,#fff0f7,#eef9ff);padding:10px 14px;border-radius:10px 10px 0 0}
+#frequencyDaily .fd-section-head{background:linear-gradient(90deg,#fff0f7,#eef9ff);padding:8px 10px;border-radius:8px}
+#frequencyDaily .fd-section-head h2,#frequencyDaily .section-head h2{color:#0753aa}
+#frequencyDaily .fd-section-head .fd-icon{background:#ff3d8d;color:#fff;box-shadow:0 3px 8px rgba(224,82,136,.25)}
+#frequencyDaily .fd-record-table table{border-radius:8px;overflow:hidden}
+#frequencyDaily .fd-record-table thead th{background:linear-gradient(90deg,#e8f5ff,#fceaf4);color:#0753aa}
+#frequencyDaily .fd-status-present{background:#dff7e8!important;color:#08783d!important;font-weight:800}
+#frequencyDaily .fd-status-absent{background:#fff0d7!important;color:#9a5600!important;font-weight:800}
+#frequencyDaily .fd-status-cancelled{background:#ffe2eb!important;color:#c51d59!important;font-weight:800}
+#frequencyDaily .fd-status-planned{background:#eaf5ff!important;color:#0753aa!important;font-weight:800}
+#frequencyDaily .cancel-reason{font-size:10px;font-weight:500;margin-top:3px;color:#9f365c}
+#frequencyDaily .cancel-btn{background:#6b7280;border-color:#6b7280;color:#fff}
+#frequencyDaily .v112-kpis{grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px}
+#frequencyDaily .v112-kpis>div{border-radius:10px;padding:11px;border:1px solid #d7e6ee;box-shadow:0 2px 7px rgba(0,0,0,.05)}
+#frequencyDaily .v112-kpis span{display:block;font-size:11px;font-weight:700;color:#456070}
+#frequencyDaily .v112-kpis strong{display:block;font-size:22px;color:#0753aa;margin-top:3px}
+#frequencyDaily .v112-kpis .kpi-blue{background:#eaf5ff;border-color:#b9dcfa}.kpi-green{background:#e5f8ec!important;border-color:#b9e8c9!important}.kpi-orange{background:#fff2dc!important;border-color:#f3d18f!important}.kpi-red{background:#ffe8ef!important;border-color:#f2b8ca!important}.kpi-purple{background:#efe9ff!important;border-color:#d0c0f5!important}.kpi-violet{background:#f5eaff!important;border-color:#ddc2f4!important}
+#frequencyDaily #fdWeeklyTrainingDescription{border:1px solid #efbfd2;background:linear-gradient(180deg,#fff7fb,#fff);box-shadow:0 2px 9px rgba(224,82,136,.08)}
+#frequencyDaily .fd-weekly-item{border-left:5px solid #e05288;background:linear-gradient(90deg,#fff9fc,#f8fcff);box-shadow:0 1px 5px rgba(7,83,170,.05)}
+#frequencyDaily .fd-weekly-item-head .badge{background:#075fc7;color:#fff;border-radius:14px;padding:5px 9px}
+#frequencyDaily .v112-cancel-list{margin:10px 0;padding:12px;border:1px solid #f1b5c8;border-radius:10px;background:#fff2f6}
+#frequencyDaily .v112-cancel-list h4{color:#c51d59;margin:0 0 8px}
+#frequencyDaily .v112-cancel-row{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px;border-radius:8px;background:#fff;border:1px solid #f0ccd8;margin-top:6px}
+#frequencyDaily .v112-cancel-row span,#frequencyDaily .v112-cancel-row small{display:block;color:#586f80;margin-top:2px}
+.v112-modal{position:fixed;inset:0;background:rgba(7,38,73,.45);display:none;align-items:center;justify-content:center;z-index:99999;padding:18px}
+.v112-modal.open{display:flex}.v112-modal-box{width:min(760px,96vw);background:#fff;border-radius:14px;border:2px solid #e05288;box-shadow:0 20px 60px rgba(0,0,0,.25);overflow:hidden}.v112-modal-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:14px 18px;background:linear-gradient(90deg,#fff0f7,#eaf7ff)}.v112-modal-head h3{margin:0;color:#0753aa}.v112-modal-head p{margin:4px 0 0;color:#587080;font-size:12px}.v112-x{border:0;background:transparent;font-size:28px;color:#0753aa;cursor:pointer}.v112-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:16px}.v112-grid label{font-weight:700;color:#173b63}.v112-grid input,.v112-grid select,.v112-grid textarea{width:100%;margin-top:4px}.v112-full{grid-column:1/-1}.v112-actions{display:flex;gap:8px;padding:0 16px 16px}.v112-actions .btn:first-child{background:#e05288;border-color:#e05288}
+@media(max-width:1100px){#frequencyDaily .v112-kpis{grid-template-columns:repeat(3,minmax(120px,1fr))}}
+@media(max-width:650px){#frequencyDaily .v112-kpis{grid-template-columns:1fr 1fr}.v112-grid{grid-template-columns:1fr}.v112-full{grid-column:auto}.v112-cancel-row{flex-direction:column;align-items:flex-start}}
+</style>
 </body>
 </html>
