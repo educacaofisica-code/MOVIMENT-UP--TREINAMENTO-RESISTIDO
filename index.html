@@ -1115,19 +1115,18 @@ async function testSupabaseConnection(){
   try{
     const response=await fetch(
       `${SUPABASE_URL}/rest/v1/assessments?select=id&limit=1`,
-      {
-        headers:{
-          'apikey':SUPABASE_KEY,
-'Authorization':'Bearer '+SUPABASE_KEY,
-          
-        }
-      }
+      {headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY},cache:'no-store'}
     );
-    console.log(response.ok
-      ? 'SUPABASE: conexão funcionando'
-      : 'SUPABASE: erro '+response.status);
+    if(response.ok){
+      console.log('SUPABASE: conexão funcionando');
+      if(window.__movimentUpSetStatus)window.__movimentUpSetStatus('online','ONLINE • Supabase conectado');
+    }else{
+      console.error('SUPABASE: erro '+response.status);
+      if(window.__movimentUpSetStatus)window.__movimentUpSetStatus('error','ONLINE • erro no Supabase');
+    }
   }catch(error){
     console.error('SUPABASE: conexão indisponível',error);
+    if(window.__movimentUpSetStatus)window.__movimentUpSetStatus('error','ONLINE • Supabase indisponível');
   }
 }
 
@@ -6309,5 +6308,137 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   }
 })();
 </script>
+
+<script id="moviment-up-final-photo-and-training-pdf-fix-v115">
+(function(){
+  'use strict';
+  const E=id=>document.getElementById(id);
+  const currentDB=()=>typeof getDB==='function'?getDB():(typeof db!=='undefined'?db:window.db);
+  const getPatient=pid=>(currentDB()?.patients||[]).find(p=>String(p.id)===String(pid));
+  const restore=(p)=>{
+    if(!p)return;
+    const set=(id,v)=>{const x=E(id);if(x)x.value=v??''};
+    set('pName',p.name);set('pId',p.internalId);set('pBirth',p.birth);set('pAge',p.age!=null?p.age+' anos':'');
+    set('pSex',p.sex);set('pUnit',p.unit);set('pSupport',p.supportLevel);set('pObs',p.obs);
+    const pv=E('pPhotoPreview');if(pv)pv.innerHTML=p.photo?'<img src="'+p.photo+'" alt="Foto do paciente cadastrada">':'';
+    const inp=E('pPhoto');if(inp)inp.value='';
+    if(typeof renderClinicalForm==='function')try{renderClinicalForm()}catch(_){ }
+  };
+  // Última camada: garante que a foto entre no objeto do paciente e seja persistida
+  // depois do salvamento normal, sem substituir a lógica de cadastro existente.
+  const baseSave=window.savePatient;
+  if(typeof baseSave==='function'&&!window.__finalPhotoSaveFix){
+    window.__finalPhotoSaveFix=true;
+    window.savePatient=async function(){
+      const d=currentDB();
+      const before=new Set((d?.patients||[]).map(p=>String(p.id)));
+      const editId=window.currentPatientEditId||window.__currentPatientEditId||'';
+      const photo=window.__pendingPatientPhoto||E('pPhoto')?.dataset?.dataUrl||'';
+      const name=(E('pName')?.value||'').trim();
+      const result=baseSave.apply(this,arguments);
+      await Promise.resolve(result);
+      const d2=currentDB();
+      const arr=d2?.patients||[];
+      let target=editId?arr.find(p=>String(p.id)===String(editId)):null;
+      if(!target)target=arr.find(p=>!before.has(String(p.id)));
+      if(!target&&name)target=arr.slice().reverse().find(p=>String(p.name||'').trim()===name);
+      if(!target)return result;
+      if(photo)target.photo=photo;
+      target.updatedAt=new Date().toISOString();
+      if(typeof persist==='function')persist();
+      window.currentPatientEditId=target.id;window.__currentPatientEditId=target.id;
+      restore(target);
+      if(typeof renderPatients==='function')try{renderPatients()}catch(_){ }
+      if(typeof populateSelects==='function')try{populateSelects()}catch(_){ }
+      return result;
+    };
+  }
+
+  // Ficha de treino: acrescenta automaticamente a foto já cadastrada no paciente.
+  const oldStrength=window.printStrengthTrainingSheet;
+  const oldAerobic=window.printAerobicTrainingSheet;
+  const oldComplete=window.printCompleteTrainingSheet;
+  function sheetData(){
+    const pid=window.currentTrainingPatientId||E('tPatient')?.value||'';
+    const p=getPatient(pid);
+    return p?.photo||'';
+  }
+  function wrapPrint(fn,title,bodyBuilder){
+    return function(){
+      // Mantém a função original como fonte de todos os dados e apenas injeta a foto.
+      const pid=(typeof currentTrainingPatientId!=='undefined'&&currentTrainingPatientId)?currentTrainingPatientId:(E('tPatient')?.value||'');
+      const p=getPatient(pid);
+      const photo=p?.photo||'';
+      if(!p||!photo)return fn.apply(this,arguments);
+      const plan=(typeof currentTrainingPlan!=='undefined'&&currentTrainingPlan)?currentTrainingPlan:(typeof getTrainingPlan==='function'?getTrainingPlan(pid):null);
+      if(!plan)return fn.apply(this,arguments);
+      try{
+        const body=bodyBuilder(p,plan);
+        const w=window.open('','_blank','width=1000,height=800');
+        if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para esta plataforma.');return;}
+        const safe=window.esc||((v)=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])));
+        const logo='';
+        w.document.open();
+        w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+safe(title)+'</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;background:#fff;font-size:11px}.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}.patient-photo{width:82px;height:82px;object-fit:cover;border-radius:50%;border:2px solid #e05288;flex:0 0 auto}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.title p{margin:0;font-size:10px;color:#566873}.patient{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:7px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px;margin-bottom:12px}.patient b{display:block;font-size:9px;color:#66777e;text-transform:uppercase}.patient span{font-weight:700}h2{font-size:14px;color:#0753aa;margin:13px 0 7px;border-bottom:1px solid #dbe5eb;padding-bottom:4px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:8px}.field{border:1px solid #dce5ea;border-radius:6px;padding:7px;min-height:27px}.field b{display:block;font-size:8px;color:#687a83;text-transform:uppercase;margin-bottom:3px}.field span{font-weight:700}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.exercise-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;margin-bottom:6px}.exercise-data{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.mini{background:#f7fafb;border-radius:5px;padding:5px}.mini b{display:block;font-size:8px;color:#687a83}.mini span{font-weight:700}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}.no-print{margin-bottom:12px}@media print{.no-print{display:none}.exercise{break-inside:avoid}}</style></head><body><div class="no-print"><button onclick="window.print()" style="padding:8px 14px;font-weight:700">Imprimir / Salvar como PDF</button><button onclick="window.close()" style="padding:8px 14px;margin-left:6px">Fechar</button></div><div class="head"><img class="patient-photo" src="'+photo+'" alt="Foto do paciente"><div class="title"><h1>'+safe(title)+'</h1><p>Moviment’ Up — Treinamento Inclusivo Adaptado · Casa de David</p></div></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Inclusivo | Casa de David. Ficha gerada a partir da prescrição registrada no sistema.</div></body></html>');
+        w.document.close();w.focus();
+      }catch(e){console.error('Ficha PDF com foto:',e);fn.apply(this,arguments)}
+    };
+  }
+  // Reaproveita exatamente os mesmos builders visuais/dados da versão existente.
+  function safe(v){return String(v==null||v===''?'—':v)}
+  function strengthBody(p,plan){
+    let h='<div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(plan.date?formatDate(plan.date):'—')+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(plan.professor)+'</span></div>';
+    if(plan.objectives?.length)h+='<h2>Objetivos</h2><div class="field"><span>'+plan.objectives.map(safe).join(' • ')+'</span></div>';
+    ['A','B','C','D','E'].forEach(d=>{const arr=plan.strength?.[d]||[];h+='<h2>TREINO '+d+'</h2>';if(!arr.length){h+='<div class="field"><span>Nenhum exercício prescrito.</span></div>';return}arr.forEach((ex,i)=>{h+='<div class="exercise"><div class="exercise-head"><b>'+(i+1)+'. '+safe(ex.name)+'</b><span>Regulagem: '+safe(ex.reg?.A)+' / '+safe(ex.reg?.F)+' / '+safe(ex.reg?.D)+' / '+safe(ex.reg?.E)+' / '+safe(ex.reg?.B)+'</span></div><div class="exercise-data"><div class="mini"><b>Carga (kg)</b><span>'+safe(ex.load)+'</span></div><div class="mini"><b>Séries</b><span>'+safe(ex.sets)+'</span></div><div class="mini"><b>Repetições</b><span>'+safe(ex.reps)+'</span></div><div class="mini"><b>Intervalo (s)</b><span>'+safe(ex.interval)+'</span></div><div class="mini"><b>Observação</b><span>'+safe(ex.obs)+'</span></div></div></div>'})});return h;
+  }
+  function aerobicBody(p,plan){const a=plan.aerobic||{};let h='<div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(plan.date?formatDate(plan.date):'—')+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(plan.professor)+'</span></div><h2>Prescrição</h2><div class="grid">';[['Modalidade',a.modality],['Frequência semanal',a.frequency!=null?a.frequency+' vezes/semana':null],['Duração',a.duration!=null?a.duration+' min':null],['Intensidade',a.intensity],['Objetivo',a.objective],['FCmáx estimada',a.fcMax],['FC repouso',a.fcRest],['FC reserva',a.fcReserve],['FC-alvo',a.fcTarget],['Velocidade',a.speed!=null?a.speed+' km/h':null],['Distância',a.distance!=null?a.distance+' km':null],['Carga / resistência',a.resistance],['Nível',a.level]].forEach(x=>h+='<div class="field"><b>'+safe(x[0])+'</b><span>'+safe(x[1])+'</span></div>');h+='</div>';if((a.functionalParts||[]).length)h+='<div class="field"><b>Treino funcional</b><span>'+a.functionalParts.map(safe).join(' • ')+'</span></div>';if(a.obs)h+='<div class="field" style="margin-top:8px"><b>Observações</b><span>'+safe(a.obs).replace(/\n/g,'<br>')+'</span></div>';return h}
+  if(typeof oldStrength==='function')window.printStrengthTrainingSheet=wrapPrint(oldStrength,'FICHA DE TREINAMENTO RESISTIDO',strengthBody);
+  if(typeof oldAerobic==='function')window.printAerobicTrainingSheet=wrapPrint(oldAerobic,'FICHA DE TREINAMENTO AERÓBICO',aerobicBody);
+  if(typeof oldComplete==='function')window.printCompleteTrainingSheet=function(){
+    const pid=(typeof currentTrainingPatientId!=='undefined'&&currentTrainingPatientId)?currentTrainingPatientId:(E('tPatient')?.value||''),p=getPatient(pid),photo=p?.photo||'',plan=(typeof currentTrainingPlan!=='undefined'&&currentTrainingPlan)?currentTrainingPlan:(typeof getTrainingPlan==='function'?getTrainingPlan(pid):null);
+    if(!p||!photo||!plan)return oldComplete.apply(this,arguments);
+    const w=window.open('','_blank','width=1000,height=800');if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para esta plataforma.');return}
+    const safe2=v=>String(v==null||v===''?'—':v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Ficha Completa de Treino</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;font-size:11px}.head{display:flex;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px}.patient-photo{width:82px;height:82px;object-fit:cover;border-radius:50%;border:2px solid #e05288}.title h1{color:#0753aa;margin:0}.patient,.field{border:1px solid #d8e3ea;padding:8px;border-radius:7px;margin:8px 0}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.exercise{border:1px solid #d7e2e8;padding:8px;margin:7px 0}.exercise-data{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.mini{background:#f7fafb;padding:5px}h2{color:#0753aa;font-size:14px}</style></head><body><div><button onclick="window.print()">Imprimir / Salvar como PDF</button></div><div class="head"><img class="patient-photo" src="'+photo+'"><div class="title"><h1>FICHA COMPLETA DE TREINO</h1><p>Moviment’ Up — Treinamento Inclusivo Adaptado · Casa de David</p></div></div>'+strengthBody(p,plan)+aerobicBody(p,plan)+'</body></html>');w.document.close();w.focus();
+  };
+})();
+</script>
+
+<script id="moviment-up-final-v115-active-and-photo-preservation">
+(function(){
+  'use strict';
+  // A Prescrição de Exercício deve ficar visualmente azul quando ativa.
+  const navTraining=document.querySelector('#nav button[onclick="show(\'training\')"]');
+  if(navTraining){
+    navTraining.classList.add('nav-training');
+    const mark=function(){
+      document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('nav-active'));
+      navTraining.classList.add('nav-active');
+    };
+    navTraining.addEventListener('click',function(){setTimeout(mark,0);});
+  }
+  // Se o paciente for aberto para edição, não perder a foto já cadastrada.
+  const oldEdit=window.editPatientClinical;
+  if(typeof oldEdit==='function'&&!window.__v115PhotoEditPreserve){
+    window.__v115PhotoEditPreserve=true;
+    window.editPatientClinical=function(pid){
+      const r=oldEdit.apply(this,arguments);
+      try{
+        const d=typeof getDB==='function'?getDB():(typeof db!=='undefined'?db:window.db);
+        const p=(d?.patients||[]).find(x=>String(x.id)===String(pid));
+        if(p){
+          window.currentPatientEditId=p.id;window.__currentPatientEditId=p.id;
+          const pv=document.getElementById('pPhotoPreview');
+          if(pv)pv.innerHTML=p.photo?'<img src="'+p.photo+'" alt="Foto do paciente cadastrada">':'';
+        }
+      }catch(_){ }
+      return r;
+    };
+  }
+})();
+</script>
+<style id="moviment-up-final-v115-training-blue">
+#nav button.nav-training.nav-active{background:linear-gradient(180deg,#2479dc,#0758b9)!important;box-shadow:inset 0 -1px #034b9e,0 1px 2px #0002!important;color:#fff!important}
+</style>
 </body>
 </html>
