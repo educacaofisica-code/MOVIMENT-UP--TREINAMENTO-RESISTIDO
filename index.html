@@ -6194,41 +6194,118 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
 (function(){
   'use strict';
   window.__pendingPatientPhoto='';
+
+  function el(id){return document.getElementById(id)}
+  function setv(id,v){const x=el(id);if(x)x.value=v??''}
+  function currentDB(){return (typeof getDB==='function'?getDB():(typeof db!=='undefined'?db:window.db))}
+  function restorePatientForm(p){
+    if(!p)return;
+    setv('pName',p.name); setv('pId',p.internalId); setv('pBirth',p.birth);
+    setv('pAge',p.age!=null?(p.age+' anos'):''); setv('pSex',p.sex); setv('pUnit',p.unit);
+    setv('pSupport',p.supportLevel); setv('pObs',p.obs);
+    if(typeof renderClinicalForm==='function'){
+      try{
+        window.__functionalRecords=(typeof normalizePatientClinical==='function'?normalizePatientClinical(p).functional:(p.functionalConditions||[]));
+        window.__diagnosisRecords=(typeof normalizePatientClinical==='function'?normalizePatientClinical(p).diagnoses:(p.diagnosisRecords||[]));
+        if(typeof renderClinicalForm==='function')renderClinicalForm();
+      }catch(_){ }
+    }
+    const preview=el('pPhotoPreview');
+    if(preview)preview.innerHTML=p.photo?'<img src="'+p.photo+'" alt="Foto do paciente cadastrada">':'';
+  }
+
   window.previewPatientPhoto=function(input){
-    const file=input&&input.files&&input.files[0];
-    const preview=document.getElementById('pPhotoPreview');
+    const file=input&&input.files&&input.files[0],preview=el('pPhotoPreview');
     if(!file){window.__pendingPatientPhoto='';if(preview)preview.innerHTML='';return;}
-    if(!file.type.startsWith('image/')){alert('Selecione uma imagem válida.');input.value='';return;}
+    if(!file.type||!file.type.startsWith('image/')){alert('Selecione uma imagem válida.');input.value='';return;}
     const reader=new FileReader();
-    reader.onload=function(){window.__pendingPatientPhoto=reader.result; if(preview)preview.innerHTML='<img src="'+reader.result+'" alt="Pré-visualização da foto">';};
+    reader.onload=function(){
+      window.__pendingPatientPhoto=reader.result;
+      if(preview)preview.innerHTML='<img src="'+reader.result+'" alt="Pré-visualização da foto">';
+    };
     reader.readAsDataURL(file);
   };
+
   const baseSave=window.savePatient;
-  if(typeof baseSave!=='function')return;
-  if(window.__patientPhotoSaveWrapped)return;
+  if(typeof baseSave!=='function'||window.__patientPhotoSaveWrapped)return;
   window.__patientPhotoSaveWrapped=true;
+
   window.savePatient=async function(){
-    const localDB=(typeof getDB==='function'?getDB():(typeof db!=='undefined'?db:window.db));
-    const before=new Set((localDB?.patients||[]).map(p=>String(p.id)));
+    const localDB=currentDB();
+    const beforeIds=new Set((localDB?.patients||[]).map(p=>String(p.id)));
     const editId=window.currentPatientEditId||window.__currentPatientEditId||'';
     const photo=window.__pendingPatientPhoto||'';
+    const formSnapshot={
+      name:el('pName')?.value||'',id:el('pId')?.value||'',birth:el('pBirth')?.value||'',age:el('pAge')?.value||'',
+      sex:el('pSex')?.value||'',unit:el('pUnit')?.value||'',support:el('pSupport')?.value||'',obs:el('pObs')?.value||''
+    };
+
     const result=baseSave.apply(this,arguments);
+    await Promise.resolve(result);
+
     try{
-      const nowDB=(typeof getDB==='function'?getDB():(typeof db!=='undefined'?db:window.db));
+      const nowDB=currentDB();
       const arr=nowDB?.patients||[];
-      let target=editId?arr.find(p=>String(p.id)===String(editId)):arr.find(p=>!before.has(String(p.id)));
-      if(!target && photo && arr.length)target=arr[arr.length-1];
-      if(target && photo){target.photo=photo;target.updatedAt=new Date().toISOString();if(typeof persist==='function')persist();}
+      let target=editId?arr.find(p=>String(p.id)===String(editId)):arr.find(p=>!beforeIds.has(String(p.id)));
+      if(!target && formSnapshot.name)target=arr.slice().reverse().find(p=>String(p.name||'').trim()===String(formSnapshot.name).trim());
+      if(!target)return result;
+
+      /* A foto passa a fazer parte do próprio objeto do paciente ANTES da persistência final. */
+      if(photo)target.photo=photo;
+      target.updatedAt=new Date().toISOString();
+      if(typeof persist==='function')persist();
+
+      /* Mantém o cadastro aberto após salvar, sem apagar os dados da tela. */
+      window.currentPatientEditId=target.id;
+      window.__currentPatientEditId=target.id;
+      restorePatientForm(target);
+
+      /* Atualiza imediatamente a pré-visualização e a lista/seletores sem trocar de paciente. */
+      if(typeof renderPatientsEnhanced==='function')renderPatientsEnhanced();
+      else if(typeof renderPatients==='function')renderPatients();
+      if(typeof populateSelects==='function')populateSelects();
+
+      /* Se houver conexão, envia também a versão final (incluindo a foto) ao Supabase. */
+      if(navigator.onLine && typeof SUPABASE_URL!=='undefined' && typeof SUPABASE_KEY!=='undefined'){
+        try{
+          const row={id:String(target.id),data:(typeof patientPayload==='function'?patientPayload(target):target),created_at:target.createdAt||new Date().toISOString(),updated_at:target.updatedAt};
+          const r=await fetch(SUPABASE_URL+'/rest/v1/patients?on_conflict=id',{
+            method:'POST',headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify([row])
+          });
+          if(!r.ok)console.error('SUPABASE FOTO/PACIENTE:',r.status,await r.text().catch(()=>''));
+        }catch(e){console.warn('Supabase foto do paciente:',e)}
+      }
     }catch(e){console.warn('Foto do paciente:',e)}
+
     window.__pendingPatientPhoto='';
-    const input=document.getElementById('pPhoto');if(input)input.value='';
-    const preview=document.getElementById('pPhotoPreview');if(preview)preview.innerHTML='';
-    return await Promise.resolve(result);
+    const input=el('pPhoto');if(input)input.value='';
+    return result;
   };
+
   const oldClear=window.clearPatient;
-  if(typeof oldClear==='function' && !window.__patientPhotoClearWrapped){
+  if(typeof oldClear==='function'&&!window.__patientPhotoClearWrapped){
     window.__patientPhotoClearWrapped=true;
-    window.clearPatient=function(){const r=oldClear.apply(this,arguments);window.__pendingPatientPhoto='';const i=document.getElementById('pPhoto');if(i)i.value='';const pv=document.getElementById('pPhotoPreview');if(pv)pv.innerHTML='';return r;};
+    window.clearPatient=function(){
+      const r=oldClear.apply(this,arguments);
+      window.__pendingPatientPhoto='';
+      const i=el('pPhoto');if(i)i.value='';
+      const pv=el('pPhotoPreview');if(pv)pv.innerHTML='';
+      return r;
+    };
+  }
+
+  /* Ao abrir um cadastro existente, a foto cadastrada reaparece imediatamente. */
+  const oldEdit=window.editPatientClinical;
+  if(typeof oldEdit==='function'&&!window.__patientPhotoEditWrapped){
+    window.__patientPhotoEditWrapped=true;
+    window.editPatientClinical=function(pid){
+      const r=oldEdit.apply(this,arguments);
+      try{
+        const p=currentDB()?.patients?.find(x=>String(x.id)===String(pid));
+        if(p){window.currentPatientEditId=p.id;window.__currentPatientEditId=p.id;restorePatientForm(p);}
+      }catch(_){ }
+      return r;
+    };
   }
 })();
 </script>
