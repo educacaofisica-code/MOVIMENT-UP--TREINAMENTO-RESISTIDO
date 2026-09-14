@@ -1019,6 +1019,7 @@ function persist(){
  }
 }
 insertInitialPatients();
+consolidateDuplicatePatients();
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function show(id){
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
@@ -1033,10 +1034,110 @@ function show(id){
   if(id==='report'){populateSelects();renderReport()}
 }
 function updateCounts(){document.getElementById('kPatients').textContent=db.patients.length;document.getElementById('kAssess').textContent=db.assessments.length;document.getElementById('kTrain').textContent=db.training.length}
-function updatePatientNameSearch(){const dl=document.getElementById('patientNameList');if(!dl)return;const list=[...db.patients].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'pt-BR',{sensitivity:'base'}));dl.innerHTML=list.map(p=>`<option value="${esc(p.name)}"></option>`).join('')}
-
-function patientOptions(selId){let s=document.getElementById(selId);if(!s)return;let old=s.value;const list=[...db.patients].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'pt-BR',{sensitivity:'base'}));s.innerHTML='<option value="">Selecione</option>'+list.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');if(list.some(p=>p.id===old))s.value=old}
-function populateSelects(){['aPatient','hPatient','tPatient','rPatient'].forEach(patientOptions);renderPatients();renderTraining();updateCounts();updatePatientNameSearch()}
+/* ==================== PACIENTES — FONTE ÚNICA E SEM DUPLICIDADE ====================
+   As listas "Escolher paciente" usam SOMENTE db.patients.
+   Avaliações, histórico, treinos, prescrições e sugestões nunca entram na fonte.
+   patientId é o vínculo oficial; registros antigos duplicados por identidade
+   são consolidados uma única vez, preservando os vínculos existentes. */
+function normalizePatientText(v){
+  return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().replace(/\s+/g,' ').toLocaleLowerCase('pt-BR');
+}
+function patientIdentityKey(p){
+  const name=normalizePatientText(p?.name);
+  const internal=normalizePatientText(p?.internalId);
+  return internal ? name+'|'+internal : name;
+}
+function patientLinkedCount(pid){
+  const tables=['assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
+  return tables.reduce((n,k)=>n+(Array.isArray(db[k])?db[k].filter(x=>String(x?.patientId)===String(pid)).length:0),0);
+}
+function patientCompleteness(p){
+  if(!p)return 0;
+  return ['name','internalId','birth','age','sex','unit','supportLevel','obs','diagnosis','diagnosisDetail','otherDiagnosis'].reduce((n,k)=>n+(String(p[k]??'').trim()?1:0),0)
+    +(Array.isArray(p.functionalConditions)?p.functionalConditions.length:0)
+    +(Array.isArray(p.diagnosisRecords)?p.diagnosisRecords.length:0)
+    +(Array.isArray(p.deficiency)?p.deficiency.length:0)
+    +(Array.isArray(p.diagnoses)?p.diagnoses.length:0);
+}
+function mergePatientRecords(target,source){
+  if(!target||!source||target===source)return;
+  const scalar=['name','internalId','birth','age','sex','unit','supportLevel','obs','diagnosis','diagnosisDetail','otherDiagnosis'];
+  scalar.forEach(k=>{
+    const tv=target[k], sv=source[k];
+    const empty=tv==null||String(tv).trim()==='';
+    if(empty && sv!=null && String(sv).trim()!=='')target[k]=sv;
+  });
+  ['functionalConditions','diagnosisRecords','deficiency','diagnoses'].forEach(k=>{
+    if(Array.isArray(source[k])){
+      if(!Array.isArray(target[k]))target[k]=[];
+      const seen=new Set(target[k].map(x=>JSON.stringify(x)));
+      source[k].forEach(x=>{const key=JSON.stringify(x);if(!seen.has(key)){target[k].push(x);seen.add(key)}});
+    }
+  });
+  target.updatedAt=new Date().toISOString();
+}
+function consolidateDuplicatePatients(){
+  if(!Array.isArray(db.patients))db.patients=[];
+  const visible=db.patients.filter(p=>p&&p.id!=null&&!p.deleted);
+  const byId=new Map(), byIdentity=new Map(), canonical=[];
+  let changed=false;
+  visible.forEach(p=>{
+    const id=String(p.id);
+    const identity=patientIdentityKey(p);
+    let keep=byId.get(id)||null;
+    if(!keep && identity)keep=byIdentity.get(identity)||null;
+    if(!keep){
+      byId.set(id,p); if(identity)byIdentity.set(identity,p); canonical.push(p); return;
+    }
+    if(keep===p)return;
+    const keepScore=patientLinkedCount(keep.id)*100+patientCompleteness(keep);
+    const pScore=patientLinkedCount(p.id)*100+patientCompleteness(p);
+    let winner=keep, loser=p;
+    if(pScore>keepScore){winner=p;loser=keep;}
+    mergePatientRecords(winner,loser);
+    const loserId=String(loser.id), winnerId=String(winner.id);
+    const tables=['assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
+    tables.forEach(k=>{if(Array.isArray(db[k]))db[k].forEach(x=>{if(String(x?.patientId)===loserId)x.patientId=winnerId})});
+    const idx=canonical.indexOf(loser); if(idx>=0)canonical.splice(idx,1);
+    byId.delete(loserId); byId.set(winnerId,winner);
+    if(identity)byIdentity.set(identity,winner);
+    changed=true;
+  });
+  if(changed){
+    db.patients=canonical.concat(db.patients.filter(p=>p&&p.deleted));
+    try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){console.warn('Não foi possível persistir a consolidação de pacientes',e)}
+  }
+  return changed;
+}
+function uniquePatients(){
+  const seenIds=new Set(), seenIdentity=new Set(), out=[];
+  (db.patients||[]).forEach(p=>{
+    if(!p||p.deleted||p.id==null)return;
+    const id=String(p.id);
+    const identity=patientIdentityKey(p);
+    if(seenIds.has(id))return;
+    /* Depois da consolidação, identidade repetida só pode ser um resíduo legado. */
+    if(identity && seenIdentity.has(identity))return;
+    seenIds.add(id); if(identity)seenIdentity.add(identity); out.push(p);
+  });
+  return out;
+}
+function updatePatientNameSearch(){
+  const dl=document.getElementById('patientNameList'); if(!dl)return;
+  const list=uniquePatients().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'pt-BR',{sensitivity:'base'}));
+  dl.innerHTML=list.map(p=>`<option value="${esc(p.name)}"></option>`).join('');
+}
+function patientOptions(selId){
+  const s=document.getElementById(selId); if(!s)return;
+  const old=String(s.value||'');
+  const list=uniquePatients().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'pt-BR',{sensitivity:'base'}));
+  s.innerHTML='<option value="">Selecione</option>'+list.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+  if(list.some(p=>String(p.id)===old))s.value=old;
+}
+function populateSelects(){
+  ['aPatient','hPatient','tPatient','sPatient','rPatient'].forEach(patientOptions);
+  renderPatients();renderTraining();updateCounts();updatePatientNameSearch();
+}
 function calcPatientAge(){
   if(!pBirth.value){pAge.value='';return}
   const birth=new Date(pBirth.value+'T00:00:00');
@@ -1139,8 +1240,8 @@ function clearPatient(){
 function renderPatients(){
  let el=document.getElementById('patientTable');
  if(!el)return;
- if(!db.patients.length){el.innerHTML='<p class="muted">Nenhum paciente cadastrado.</p>';return}
- el.innerHTML='<table><tr><th>Paciente</th><th>Unidade</th><th>Idade</th><th>Diagnóstico</th><th>Ações</th></tr>'+db.patients.map(p=>{
+ if(!uniquePatients().length){el.innerHTML='<p class="muted">Nenhum paciente cadastrado.</p>';return}
+ el.innerHTML='<table><tr><th>Paciente</th><th>Unidade</th><th>Idade</th><th>Diagnóstico</th><th>Ações</th></tr>'+uniquePatients().map(p=>{
    const count=assessmentsFor(p.id).length;
    return `<tr><td>${esc(p.name)}</td><td>${esc(p.unit)}</td><td>${p.age!=null?p.age+' anos':'—'}</td><td>${esc(p.diagnosis||'—')}${p.diagnosisDetail?' — '+esc(p.diagnosisDetail):''}${p.otherDiagnosis?' — '+esc(p.otherDiagnosis):''}<br><span class="small muted">${p.supportLevel?esc(p.supportLevel):'Nível de apoio não informado'}</span></td><td><div class="actions" style="margin-top:0"><button class="btn" onclick="openPatientAssessments('${p.id}')">Abrir avaliação${count===1?'':'s'}${count?` (${count})`:''}</button><button class="btn secondary" onclick="newAssessmentFor('${p.id}')">Nova avaliação</button></div></td></tr>`;
  }).join('')+'</table>'
@@ -2035,8 +2136,8 @@ document.getElementById('patientAssessmentsModal')?.addEventListener('click',e=>
   };
   window.clearPatient=function(){currentPatientEditId=null;['pName','pId','pBirth','pAge','pObs'].forEach(id=>setv(id,''));setv('pSex','');setv('pUnit','');setv('pSupport','');window.__functionalRecords=[];window.__diagnosisRecords=[];renderClinicalForm();e('patientMsg').innerHTML='';};
   function renderPatientsEnhanced(){
-    const el=e('patientTable');if(!el)return;if(!db.patients.length){el.innerHTML='<p class="muted">Nenhum paciente cadastrado.</p>';return}
-    el.innerHTML='<table><tr><th>Paciente</th><th>Unidade</th><th>Condição funcional</th><th>Diagnósticos / saúde</th><th>Ações</th></tr>'+db.patients.map(p=>{const c=normalizePatientClinical(p);const as=assessmentsFor(p.id);return `<tr><td><b>${esc(p.name)}</b><br><span class="small muted">${p.age!=null?p.age+' anos':'—'} · ${esc(p.sex||'—')}</span></td><td>${esc(p.unit||'—')}</td><td>${esc(c.functional.map(x=>x.name+(x.classification?' — '+x.classification:'')).join('; ')||'—')}</td><td>${esc(c.diagnoses.map(x=>x.name).join('; ')||'—')}</td><td><div class="actions" style="margin-top:0"><button class="btn" onclick="editPatientClinical('${p.id}')">Editar cadastro</button><button class="btn secondary" onclick="openPatientAssessments('${p.id}')">Abrir avaliação${as.length===1?'':'s'}${as.length?` (${as.length})`:''}</button><button class="btn secondary" onclick="newAssessmentFor('${p.id}')">Nova avaliação</button></div></td></tr>`}).join('')+'</table>';
+    const el=e('patientTable');if(!el)return;if(!uniquePatients().length){el.innerHTML='<p class="muted">Nenhum paciente cadastrado.</p>';return}
+    el.innerHTML='<table><tr><th>Paciente</th><th>Unidade</th><th>Condição funcional</th><th>Diagnósticos / saúde</th><th>Ações</th></tr>'+uniquePatients().map(p=>{const c=normalizePatientClinical(p);const as=assessmentsFor(p.id);return `<tr><td><b>${esc(p.name)}</b><br><span class="small muted">${p.age!=null?p.age+' anos':'—'} · ${esc(p.sex||'—')}</span></td><td>${esc(p.unit||'—')}</td><td>${esc(c.functional.map(x=>x.name+(x.classification?' — '+x.classification:'')).join('; ')||'—')}</td><td>${esc(c.diagnoses.map(x=>x.name).join('; ')||'—')}</td><td><div class="actions" style="margin-top:0"><button class="btn" onclick="editPatientClinical('${p.id}')">Editar cadastro</button><button class="btn secondary" onclick="openPatientAssessments('${p.id}')">Abrir avaliação${as.length===1?'':'s'}${as.length?` (${as.length})`:''}</button><button class="btn secondary" onclick="newAssessmentFor('${p.id}')">Nova avaliação</button></div></td></tr>`}).join('')+'</table>';
   }
   window.renderPatients=renderPatientsEnhanced;
 
@@ -2866,8 +2967,8 @@ const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(win
     if(document.getElementById('sPatient')){
       const s=document.getElementById('sPatient');
       const old=s.value;
-      s.innerHTML='<option value="">Selecione</option>'+db.patients.map(p=>`<option value="${p.id}">${esc2(p.name)}</option>`).join('');
-      if(pid && db.patients.some(p=>p.id===pid))s.value=pid; else if(old&&db.patients.some(p=>p.id===old))s.value=old;
+      s.innerHTML='<option value="">Selecione</option>'+uniquePatients().map(p=>`<option value="${esc2(p.id)}">${esc2(p.name)}</option>`).join('');
+      if(pid && uniquePatients().some(p=>String(p.id)===String(pid)))s.value=pid; else if(old&&uniquePatients().some(p=>String(p.id)===String(old)))s.value=old;
       if(document.getElementById('suggestion')?.classList.contains('active'))renderSuggestionTab();
     }
   };
@@ -2877,8 +2978,8 @@ const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(win
     const s=document.getElementById('sPatient');
     if(s){
       const old=s.value;
-      s.innerHTML='<option value="">Selecione</option>'+db.patients.map(p=>`<option value="${p.id}">${esc2(p.name)}</option>`).join('');
-      if(db.patients.some(p=>p.id===old))s.value=old;
+      s.innerHTML='<option value="">Selecione</option>'+uniquePatients().map(p=>`<option value="${esc2(p.id)}">${esc2(p.name)}</option>`).join('');
+      if(uniquePatients().some(p=>String(p.id)===String(old)))s.value=old;
     }
     updateTrainingProfessorCref(); updateSuggestionProfessorCref();
   };
@@ -5624,237 +5725,5 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   }, true);
 })();
 </script>
-
-<script id="moviment-up-patient-identity-final-fix">
-(function(){
-  'use strict';
-
-  const PATIENT_TABLES = [
-    'assessments','training','trainingPlans','trainingProgressions',
-    'trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'
-  ];
-
-  function norm(v){
-    return String(v||'')
-      .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-      .toLowerCase().trim().replace(/\s+/g,' ');
-  }
-
-  function keyOf(p){
-    const name=norm(p?.name);
-    if(!name)return '';
-    const internal=norm(p?.internalId);
-    return internal ? name+'|'+internal : name;
-  }
-
-  function cloneValue(v){
-    try{return JSON.parse(JSON.stringify(v));}catch(e){return v;}
-  }
-
-  function mergePatient(base, extra){
-    const out=base;
-    if(!extra)return out;
-    Object.keys(extra).forEach(k=>{
-      if(k==='id')return;
-      const v=extra[k];
-      const empty=v==null ||
-        (typeof v==='string' && !v.trim()) ||
-        (Array.isArray(v) && !v.length);
-      const cur=out[k];
-      const curEmpty=cur==null ||
-        (typeof cur==='string' && !cur.trim()) ||
-        (Array.isArray(cur) && !cur.length);
-      if(curEmpty && !empty) out[k]=cloneValue(v);
-    });
-    ['functionalConditions','diagnosisRecords','deficiency','diagnoses'].forEach(k=>{
-      if(Array.isArray(extra[k]) && extra[k].length){
-        const arr=Array.isArray(out[k])?out[k]:[];
-        const seen=new Set(arr.map(x=>typeof x==='object'?JSON.stringify(x):String(x)));
-        extra[k].forEach(x=>{
-          const sig=typeof x==='object'?JSON.stringify(x):String(x);
-          if(!seen.has(sig)){arr.push(cloneValue(x));seen.add(sig);}
-        });
-        out[k]=arr;
-      }
-    });
-    return out;
-  }
-
-  function linkedCount(pid){
-    let n=0;
-    PATIENT_TABLES.forEach(t=>{
-      n += (Array.isArray(db?.[t]) ? db[t] : [])
-        .filter(r=>String(r?.patientId||'')===String(pid)).length;
-    });
-    return n;
-  }
-
-  function reassignLinks(fromId,toId){
-    PATIENT_TABLES.forEach(t=>{
-      const arr=db?.[t];
-      if(!Array.isArray(arr))return;
-      arr.forEach(r=>{
-        if(String(r?.patientId||'')===String(fromId)){
-          r.patientId=String(toId);
-          if(!r.updatedAt)r.updatedAt=new Date().toISOString();
-        }
-      });
-    });
-    try{
-      if(String(window.activePatientId||'')===String(fromId))
-        window.activePatientId=String(toId);
-    }catch(e){}
-  }
-
-  function chooseCanonical(a,b){
-    if(a?.deleted!==b?.deleted){
-      return a?.deleted ? b : a;
-    }
-    const ca=linkedCount(a?.id), cb=linkedCount(b?.id);
-    if(ca!==cb)return ca>cb?a:b;
-
-    const score=p=>{
-      let s=0;
-      ['internalId','birth','age','sex','unit','supportLevel','obs',
-       'diagnosis','diagnosisDetail','otherDiagnosis'].forEach(k=>{
-        const v=p?.[k];
-        if(v!=null && String(v).trim() && String(v)!=='null')s++;
-      });
-      ['functionalConditions','diagnosisRecords','deficiency','diagnoses'].forEach(k=>{
-        if(Array.isArray(p?.[k]) && p[k].length)s+=2;
-      });
-      return s;
-    };
-    return score(a)>=score(b)?a:b;
-  }
-
-  function dedupePatients(){
-    if(!db || !Array.isArray(db.patients))return false;
-
-    const groups=new Map();
-    db.patients.forEach(p=>{
-      if(!p || p.id==null || p.deleted)return;
-      const k=keyOf(p);
-      if(!k)return;
-      if(!groups.has(k))groups.set(k,[]);
-      groups.get(k).push(p);
-    });
-
-    let changed=false;
-    const aliases=new Map();
-
-    groups.forEach(list=>{
-      if(list.length<2)return;
-      let canonical=list[0];
-      list.slice(1).forEach(p=>{
-        canonical=chooseCanonical(canonical,p);
-      });
-      list.forEach(p=>{
-        if(p===canonical)return;
-        mergePatient(canonical,p);
-        reassignLinks(p.id,canonical.id);
-        aliases.set(String(p.id),String(canonical.id));
-        changed=true;
-      });
-    });
-
-    if(changed){
-      const seen=new Set();
-      db.patients=db.patients.filter(p=>{
-        if(!p || p.id==null)return false;
-        if(p.deleted)return true;
-        const k=keyOf(p);
-        if(!k)return true;
-        if(seen.has(k))return false;
-        seen.add(k);
-        return true;
-      });
-      try{localStorage.setItem(KEY,JSON.stringify(db));}catch(e){}
-    }
-    return changed;
-  }
-
-  function uniquePatients(){
-    dedupePatients();
-    const seenId=new Set(), seenKey=new Set(), out=[];
-    (db.patients||[]).forEach(p=>{
-      if(!p || p.deleted || p.id==null)return;
-      const id=String(p.id), key=keyOf(p);
-      if(seenId.has(id))return;
-      if(key && seenKey.has(key))return;
-      seenId.add(id); if(key)seenKey.add(key); out.push(p);
-    });
-    return out;
-  }
-
-  // A lista de seleção passa a usar somente o cadastro único de pacientes.
-  window.patientOptions=function(selId){
-    const s=document.getElementById(selId);
-    if(!s)return;
-    const old=String(s.value||'');
-    const list=uniquePatients().slice().sort((a,b)=>
-      String(a.name||'').localeCompare(String(b.name||''),'pt-BR',{sensitivity:'base'})
-    );
-    s.innerHTML='<option value="">Selecione</option>'+
-      list.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
-    if(list.some(p=>String(p.id)===old))s.value=old;
-  };
-
-  window.updatePatientNameSearch=function(){
-    const dl=document.getElementById('patientNameList');
-    if(!dl)return;
-    const list=uniquePatients().slice().sort((a,b)=>
-      String(a.name||'').localeCompare(String(b.name||''),'pt-BR',{sensitivity:'base'})
-    );
-    dl.innerHTML=list.map(p=>`<option value="${esc(p.name)}"></option>`).join('');
-  };
-
-  // Evita que o botão "Salvar paciente" crie outro cadastro com o mesmo paciente.
-  const originalSavePatient=window.savePatient;
-  if(typeof originalSavePatient==='function' && !window.__patientIdentitySaveFix){
-    window.__patientIdentitySaveFix=true;
-    window.savePatient=function(){
-      dedupePatients();
-      const name=norm(document.getElementById('pName')?.value);
-      const internal=norm(document.getElementById('pId')?.value);
-      const existing=(db.patients||[]).find(p=>
-        !p.deleted && norm(p.name)===name &&
-        (!internal || norm(p.internalId)===internal || !p.internalId)
-      );
-      if(existing && typeof window.currentPatientEditId==='undefined'){
-        // Não força edição silenciosamente; apenas impede duplicação.
-        if(typeof window.editPatientClinical==='function'){
-          window.editPatientClinical(existing.id);
-          const msg=document.getElementById('patientMsg');
-          if(msg)msg.innerHTML='<div class="notice">Este paciente já está cadastrado. O cadastro existente foi aberto para edição, sem criar duplicidade.</div>';
-        }
-        return;
-      }
-      return originalSavePatient.apply(this,arguments);
-    };
-  }
-
-  // Primeira limpeza imediata: consolida duplicatas antigas sem apagar avaliações/treinos.
-  dedupePatients();
-
-  // Atualiza as listas após a limpeza.
-  try{
-    if(typeof populateSelects==='function')populateSelects();
-    else{
-      ['aPatient','hPatient','tPatient','sPatient','rPatient'].forEach(window.patientOptions);
-      window.updatePatientNameSearch();
-    }
-  }catch(e){console.warn('Correção de identidade de pacientes:',e);}
-
-  // Segunda proteção após eventos assíncronos/sincronização.
-  setTimeout(function(){
-    try{
-      if(dedupePatients() && typeof populateSelects==='function')populateSelects();
-    }catch(e){}
-  },1200);
-
-})();
-</script>
-
 </body>
 </html>
