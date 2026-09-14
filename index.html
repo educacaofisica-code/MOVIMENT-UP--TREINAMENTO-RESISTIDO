@@ -5359,12 +5359,18 @@ setTimeout(render,200);setTimeout(render,800);
 
   /* O salvamento local continua funcionando sem internet. Depois de salvar,
      tenta sincronizar automaticamente quando houver conexão. */
+  /* Um único disparo agendado por persist(). Evita que vários persist() seguidos
+     (inclusive os usados pela foto) façam o indicador voltar para SINCRONIZANDO. */
   const originalPersist=window.persist;
   if(typeof originalPersist==='function'&&!window.__movimentUpPersistV10){
     window.__movimentUpPersistV10=true;
+    let syncTimer=null;
     window.persist=function(){
       const result=originalPersist.apply(this,arguments);
-      if(result!==false&&navigator.onLine)setTimeout(()=>syncNow('alteração salva localmente'),300);
+      if(result!==false&&navigator.onLine){
+        clearTimeout(syncTimer);
+        syncTimer=setTimeout(()=>{syncTimer=null;syncNow('alteração salva localmente')},700);
+      }
       return result;
     };
   }
@@ -6111,332 +6117,27 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
 })();
 </script>
 
-<script id="training-sheet-print-v10-4">
-(function(){
-  function sheetPatient(){
-    if(!currentTrainingPatientId){alert('Selecione um paciente antes de gerar a ficha de treino.');return null;}
-    const p=(db.patients||[]).find(x=>x.id===currentTrainingPatientId)||{};
-    const plan=currentTrainingPlan||getTrainingPlan(currentTrainingPatientId);
-    if(!plan){alert('Este paciente ainda não possui uma prescrição salva. Salve a prescrição antes de gerar a ficha.');return null;}
-    return {p,plan};
-  }
-  function safe(v){return esc(v==null||v===''?'—':String(v));}
-  function openSheet(title,body){
-    const w=window.open('','_blank','width=1000,height=800');
-    if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para esta plataforma.');return;}
-    w.document.open();
-    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+safe(title)+'</title><style>'+`
-      @page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;background:#fff;font-size:11px}
-      .head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}
-      .logo{max-width:145px;max-height:58px;object-fit:contain}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.title p{margin:0;font-size:10px;color:#566873}
-      .patient{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:7px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px;margin-bottom:12px}.patient b{display:block;font-size:9px;color:#66777e;text-transform:uppercase}.patient span{font-weight:700;font-size:11px}
-      h2{font-size:14px;color:#0753aa;margin:13px 0 7px;border-bottom:1px solid #dbe5eb;padding-bottom:4px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:8px}.field{border:1px solid #dce5ea;border-radius:6px;padding:7px;min-height:27px}.field b{display:block;font-size:8px;color:#687a83;text-transform:uppercase;margin-bottom:3px}.field span{font-weight:700}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.exercise-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;margin-bottom:6px}.exercise-data{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.mini{background:#f7fafb;border-radius:5px;padding:5px}.mini b{display:block;font-size:8px;color:#687a83}.mini span{font-weight:700}.obs{margin-top:5px;font-size:9px;color:#4e626b}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}.no-print{margin-bottom:12px}@media print{.no-print{display:none}.exercise{break-inside:avoid}}
-    `+'</style></head><body><div class="no-print"><button onclick="window.print()" style="padding:8px 14px;font-weight:700">Imprimir / Salvar como PDF</button><button onclick="window.close()" style="padding:8px 14px;margin-left:6px">Fechar</button></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David. Ficha gerada a partir da prescrição registrada no sistema.</div></body></html>');
-    w.document.close();w.focus();
-  }
-  function header(title,p,plan){
-    const prof=plan.professor||'—', date=plan.date?formatDate(plan.date):'—';
-    return '<div class="head"><div class="title"><h1>'+safe(title)+'</h1><p>Moviment’ Up — Casa de David</p></div></div><div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(date)+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(prof)+'</span></div>';
-  }
-  function strengthBody(p,plan,onlyDay){
-    let days=onlyDay?[onlyDay]:['A','B','C','D','E'];
-    let h=header(onlyDay?'FICHA DE TREINO — TREINO '+onlyDay:'FICHA DE TREINAMENTO RESISTIDO',p,plan);
-    if(plan.objectives?.length) h+='<h2>Objetivos</h2><div class="field"><span>'+plan.objectives.map(safe).join(' • ')+'</span></div>';
-    days.forEach(d=>{
-      const arr=plan.strength?.[d]||[];
-      h+='<h2>TREINO '+d+'</h2>';
-      if(!arr.length){h+='<div class="field"><span>Nenhum exercício prescrito.</span></div>';return;}
-      arr.forEach((ex,i)=>{
-        h+='<div class="exercise"><div class="exercise-head"><b>'+((i+1)+'. '+safe(ex.name))+'</b><span>Regulagem: '+safe(ex.reg?.A)+' / '+safe(ex.reg?.F)+' / '+safe(ex.reg?.D)+' / '+safe(ex.reg?.E)+' / '+safe(ex.reg?.B)+'</span></div><div class="exercise-data"><div class="mini"><b>Carga (kg)</b><span>'+safe(ex.load)+'</span></div><div class="mini"><b>Séries</b><span>'+safe(ex.sets)+'</span></div><div class="mini"><b>Repetições</b><span>'+safe(ex.reps)+'</span></div><div class="mini"><b>Intervalo (s)</b><span>'+safe(ex.interval)+'</span></div><div class="mini"><b>Observação</b><span>'+safe(ex.obs)+'</span></div></div></div>';
-      });
-    });
-    return h;
-  }
-  function aerobicBody(p,plan){
-    const a=plan.aerobic||{};
-    let h=header('FICHA DE TREINAMENTO AERÓBICO',p,plan);
-    h+='<h2>Prescrição</h2><div class="grid">'+[
-      ['Modalidade',a.modality],['Frequência semanal',a.frequency!=null?a.frequency+' vezes/semana':null],['Duração',a.duration!=null?a.duration+' min':null],['Intensidade',a.intensity],['Objetivo',a.objective],['FCmáx estimada',a.fcMax],['FC repouso',a.fcRest],['FC reserva',a.fcReserve],['FC-alvo',a.fcTarget],['Velocidade',a.speed!=null?a.speed+' km/h':null],['Distância',a.distance!=null?a.distance+' km':null],['Carga / resistência',a.resistance],['Nível',a.level]
-    ].map(x=>'<div class="field"><b>'+safe(x[0])+'</b><span>'+safe(x[1])+'</span></div>').join('')+'</div>';
-    if((a.functionalParts||[]).length)h+='<div class="field"><b>Treino funcional</b><span>'+a.functionalParts.map(safe).join(' • ')+'</span></div>';
-    if(a.obs)h+='<div class="field" style="margin-top:8px"><b>Observações</b><span>'+safe(a.obs).replace(/\n/g,'<br>')+'</span></div>';
-    return h;
-  }
-  window.printStrengthTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha de Treinamento Resistido',strengthBody(x.p,x.plan));};
-  window.printAerobicTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha de Treinamento Aeróbico',aerobicBody(x.p,x.plan));};
-  window.printCompleteTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha Completa de Treino',strengthBody(x.p,x.plan)+aerobicBody(x.p,x.plan));};
-})();
-</script>
 
-
-<script id="moviment-up-patient-photo-idb">
-(function(){
-  'use strict';
-  const DBNAME='moviment_up_patient_photos_v1', STORE='photos';
-  let dbi=null;
-  function openDB(){return new Promise((resolve,reject)=>{if(dbi)return resolve(dbi);if(!window.indexedDB)return reject(new Error('IndexedDB indisponível'));const r=indexedDB.open(DBNAME,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE)};r.onsuccess=()=>{dbi=r.result;resolve(dbi)};r.onerror=()=>reject(r.error||new Error('IndexedDB error'))})}
-  async function put(id,data){const d=await openDB();return new Promise((res,rej)=>{const tx=d.transaction(STORE,'readwrite');tx.objectStore(STORE).put(data,String(id));tx.oncomplete=res;tx.onerror=()=>rej(tx.error)})}
-  async function all(){const d=await openDB();return new Promise((res,rej)=>{const tx=d.transaction(STORE,'readonly'),q=tx.objectStore(STORE).getAllKeys(),out=[];q.onsuccess=()=>{const keys=q.result||[];if(!keys.length)return res([]);let n=0;keys.forEach(k=>{const g=tx.objectStore(STORE).get(k);g.onsuccess=()=>{out.push([String(k),g.result]);if(++n===keys.length)res(out)};g.onerror=()=>{if(++n===keys.length)res(out)}})};q.onerror=()=>rej(q.error)})}
-  window.__savePatientPhotosToIDB=async function(){try{const d=(typeof db!=='undefined'?db:window.db);for(const p of (d?.patients||[])){if(p?.id&&p.photo)await put(p.id,p.photo)}}catch(e){console.warn('Fotos IndexedDB:',e)}};
-  window.__hydratePatientPhotosFromIDB=async function(){try{const d=(typeof db!=='undefined'?db:window.db);const rows=await all();let changed=false;rows.forEach(([id,photo])=>{const p=(d?.patients||[]).find(x=>String(x.id)===id);if(p&&photo&&!p.photo){p.photo=photo;changed=true}});if(changed){if(typeof refresh==='function')refresh();if(typeof populateSelects==='function')populateSelects()}}catch(e){console.warn('Fotos IndexedDB — hidratação:',e)}};
-  document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>window.__hydratePatientPhotosFromIDB(),50));
-})();
-</script>
-
-<script id="patient-photo-integration">
-(function(){
-  'use strict';
-  window.__pendingPatientPhoto='';
-
-  function el(id){return document.getElementById(id)}
-  function setv(id,v){const x=el(id);if(x)x.value=v??''}
-  function currentDB(){return (typeof getDB==='function'?getDB():(typeof db!=='undefined'?db:window.db))}
-  function restorePatientForm(p){
-    if(!p)return;
-    setv('pName',p.name); setv('pId',p.internalId); setv('pBirth',p.birth);
-    setv('pAge',p.age!=null?(p.age+' anos'):''); setv('pSex',p.sex); setv('pUnit',p.unit);
-    setv('pSupport',p.supportLevel); setv('pObs',p.obs);
-    if(typeof renderClinicalForm==='function'){
-      try{
-        window.__functionalRecords=(typeof normalizePatientClinical==='function'?normalizePatientClinical(p).functional:(p.functionalConditions||[]));
-        window.__diagnosisRecords=(typeof normalizePatientClinical==='function'?normalizePatientClinical(p).diagnoses:(p.diagnosisRecords||[]));
-        if(typeof renderClinicalForm==='function')renderClinicalForm();
-      }catch(_){ }
-    }
-    const preview=el('pPhotoPreview');
-    if(preview)preview.innerHTML=p.photo?'<img src="'+p.photo+'" alt="Foto do paciente cadastrada">':'';
-  }
-
-  window.previewPatientPhoto=function(input){
-    const file=input&&input.files&&input.files[0],preview=el('pPhotoPreview');
-    if(!file){window.__pendingPatientPhoto='';if(preview)preview.innerHTML='';return;}
-    if(!file.type||!file.type.startsWith('image/')){alert('Selecione uma imagem válida.');input.value='';return;}
-    const reader=new FileReader();
-    reader.onload=function(){
-      const src=reader.result;
-      const img=new Image();
-      img.onload=function(){
-        const max=900, scale=Math.min(1,max/Math.max(img.naturalWidth||img.width||1,img.naturalHeight||img.height||1));
-        const w=Math.max(1,Math.round((img.naturalWidth||img.width)*scale));
-        const h=Math.max(1,Math.round((img.naturalHeight||img.height)*scale));
-        const c=document.createElement('canvas'); c.width=w; c.height=h;
-        c.getContext('2d').drawImage(img,0,0,w,h);
-        let data=c.toDataURL('image/jpeg',0.78);
-        if(data.length>320000)data=c.toDataURL('image/jpeg',0.62);
-        window.__pendingPatientPhoto=data;
-        if(input)input.dataset.dataUrl=data;
-        if(preview)preview.innerHTML='<img src="'+data+'" alt="Pré-visualização da foto">';
-      };
-      img.onerror=function(){window.__pendingPatientPhoto=src;if(preview)preview.innerHTML='<img src="'+src+'" alt="Pré-visualização da foto">';};
-      img.src=src;
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const baseSave=window.savePatient;
-  if(typeof baseSave!=='function'||window.__patientPhotoSaveWrapped)return;
-  window.__patientPhotoSaveWrapped=true;
-
-  window.savePatient=async function(){
-    const localDB=currentDB();
-    const beforeIds=new Set((localDB?.patients||[]).map(p=>String(p.id)));
-    const editId=window.currentPatientEditId||window.__currentPatientEditId||'';
-    const photo=window.__pendingPatientPhoto||'';
-    const formSnapshot={
-      name:el('pName')?.value||'',id:el('pId')?.value||'',birth:el('pBirth')?.value||'',age:el('pAge')?.value||'',
-      sex:el('pSex')?.value||'',unit:el('pUnit')?.value||'',support:el('pSupport')?.value||'',obs:el('pObs')?.value||''
-    };
-
-    const result=baseSave.apply(this,arguments);
-    await Promise.resolve(result);
-
-    try{
-      const nowDB=currentDB();
-      const arr=nowDB?.patients||[];
-      let target=editId?arr.find(p=>String(p.id)===String(editId)):arr.find(p=>!beforeIds.has(String(p.id)));
-      if(!target && formSnapshot.name)target=arr.slice().reverse().find(p=>String(p.name||'').trim()===String(formSnapshot.name).trim());
-      if(!target)return result;
-
-      /* A foto passa a fazer parte do próprio objeto do paciente ANTES da persistência final. */
-      if(photo)target.photo=photo;
-      target.updatedAt=new Date().toISOString();
-      if(typeof persist==='function')persist();
-
-      /* Mantém o cadastro aberto após salvar, sem apagar os dados da tela. */
-      window.currentPatientEditId=target.id;
-      window.__currentPatientEditId=target.id;
-      restorePatientForm(target);
-
-      /* Atualiza imediatamente a pré-visualização e a lista/seletores sem trocar de paciente. */
-      if(typeof renderPatientsEnhanced==='function')renderPatientsEnhanced();
-      else if(typeof renderPatients==='function')renderPatients();
-      if(typeof populateSelects==='function')populateSelects();
-
-      /* A sincronização é feita exclusivamente pelo mecanismo central após persist(). */
-    }catch(e){console.warn('Foto do paciente:',e)}
-
-    window.__pendingPatientPhoto='';
-    const input=el('pPhoto');if(input){input.value='';delete input.dataset.dataUrl;}
-    return result;
-  };
-
-  const oldClear=window.clearPatient;
-  if(typeof oldClear==='function'&&!window.__patientPhotoClearWrapped){
-    window.__patientPhotoClearWrapped=true;
-    window.clearPatient=function(){
-      const r=oldClear.apply(this,arguments);
-      window.__pendingPatientPhoto='';
-      const i=el('pPhoto');if(i)i.value='';
-      const pv=el('pPhotoPreview');if(pv)pv.innerHTML='';
-      return r;
-    };
-  }
-
-  /* Ao abrir um cadastro existente, a foto cadastrada reaparece imediatamente. */
-  const oldEdit=window.editPatientClinical;
-  if(typeof oldEdit==='function'&&!window.__patientPhotoEditWrapped){
-    window.__patientPhotoEditWrapped=true;
-    window.editPatientClinical=function(pid){
-      const r=oldEdit.apply(this,arguments);
-      try{
-        const p=currentDB()?.patients?.find(x=>String(x.id)===String(pid));
-        if(p){window.currentPatientEditId=p.id;window.__currentPatientEditId=p.id;restorePatientForm(p);}
-      }catch(_){ }
-      return r;
-    };
-  }
-})();
-</script>
-
-<script id="moviment-up-final-photo-and-training-pdf-fix-v115">
-(function(){
-  'use strict';
-  const E=id=>document.getElementById(id);
-  const currentDB=()=>typeof getDB==='function'?getDB():(typeof db!=='undefined'?db:window.db);
-  const getPatient=pid=>(currentDB()?.patients||[]).find(p=>String(p.id)===String(pid));
-  const restore=(p)=>{
-    if(!p)return;
-    const set=(id,v)=>{const x=E(id);if(x)x.value=v??''};
-    set('pName',p.name);set('pId',p.internalId);set('pBirth',p.birth);set('pAge',p.age!=null?p.age+' anos':'');
-    set('pSex',p.sex);set('pUnit',p.unit);set('pSupport',p.supportLevel);set('pObs',p.obs);
-    const pv=E('pPhotoPreview');if(pv)pv.innerHTML=p.photo?'<img src="'+p.photo+'" alt="Foto do paciente cadastrada">':'';
-    const inp=E('pPhoto');if(inp){inp.value='';delete inp.dataset.dataUrl;}
-    if(typeof renderClinicalForm==='function')try{renderClinicalForm()}catch(_){ }
-  };
-  // O salvamento do paciente permanece em uma única cadeia; não criar um segundo wrapper.
-  // Ficha de treino: acrescenta automaticamente a foto já cadastrada no paciente.
-  const oldStrength=window.printStrengthTrainingSheet;
-  const oldAerobic=window.printAerobicTrainingSheet;
-  const oldComplete=window.printCompleteTrainingSheet;
-  function sheetData(){
-    const pid=window.currentTrainingPatientId||E('tPatient')?.value||'';
-    const p=getPatient(pid);
-    return p?.photo||'';
-  }
-  function wrapPrint(fn,title,bodyBuilder){
-    return function(){
-      // Mantém a função original como fonte de todos os dados e apenas injeta a foto.
-      const pid=(typeof currentTrainingPatientId!=='undefined'&&currentTrainingPatientId)?currentTrainingPatientId:(E('tPatient')?.value||'');
-      const p=getPatient(pid);
-      const photo=p?.photo||'';
-      if(!p||!photo)return fn.apply(this,arguments);
-      const plan=(typeof currentTrainingPlan!=='undefined'&&currentTrainingPlan)?currentTrainingPlan:(typeof getTrainingPlan==='function'?getTrainingPlan(pid):null);
-      if(!plan)return fn.apply(this,arguments);
-      try{
-        const body=bodyBuilder(p,plan);
-        const w=window.open('','_blank','width=1000,height=800');
-        if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para esta plataforma.');return;}
-        const safe=window.esc||((v)=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])));
-        const logo='';
-        w.document.open();
-        w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+safe(title)+'</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;background:#fff;font-size:11px}.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}.patient-photo{width:82px;height:82px;object-fit:cover;border-radius:50%;border:2px solid #e05288;flex:0 0 auto}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.title p{margin:0;font-size:10px;color:#566873}.patient{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:7px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px;margin-bottom:12px}.patient b{display:block;font-size:9px;color:#66777e;text-transform:uppercase}.patient span{font-weight:700}h2{font-size:14px;color:#0753aa;margin:13px 0 7px;border-bottom:1px solid #dbe5eb;padding-bottom:4px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:8px}.field{border:1px solid #dce5ea;border-radius:6px;padding:7px;min-height:27px}.field b{display:block;font-size:8px;color:#687a83;text-transform:uppercase;margin-bottom:3px}.field span{font-weight:700}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.exercise-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;margin-bottom:6px}.exercise-data{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.mini{background:#f7fafb;border-radius:5px;padding:5px}.mini b{display:block;font-size:8px;color:#687a83}.mini span{font-weight:700}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}.no-print{margin-bottom:12px}@media print{.no-print{display:none}.exercise{break-inside:avoid}}</style></head><body><div class="no-print"><button onclick="window.print()" style="padding:8px 14px;font-weight:700">Imprimir / Salvar como PDF</button><button onclick="window.close()" style="padding:8px 14px;margin-left:6px">Fechar</button></div><div class="head"><img class="patient-photo" src="'+photo+'" alt="Foto do paciente"><div class="title"><h1>'+safe(title)+'</h1><p>Moviment’ Up — Treinamento Inclusivo Adaptado · Casa de David</p></div></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Inclusivo | Casa de David. Ficha gerada a partir da prescrição registrada no sistema.</div></body></html>');
-        w.document.close();w.focus();
-      }catch(e){console.error('Ficha PDF com foto:',e);fn.apply(this,arguments)}
-    };
-  }
-  // Reaproveita exatamente os mesmos builders visuais/dados da versão existente.
-  function safe(v){return String(v==null||v===''?'—':v)}
-  function strengthBody(p,plan){
-    let h='<div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(plan.date?formatDate(plan.date):'—')+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(plan.professor)+'</span></div>';
-    if(plan.objectives?.length)h+='<h2>Objetivos</h2><div class="field"><span>'+plan.objectives.map(safe).join(' • ')+'</span></div>';
-    ['A','B','C','D','E'].forEach(d=>{const arr=plan.strength?.[d]||[];h+='<h2>TREINO '+d+'</h2>';if(!arr.length){h+='<div class="field"><span>Nenhum exercício prescrito.</span></div>';return}arr.forEach((ex,i)=>{h+='<div class="exercise"><div class="exercise-head"><b>'+(i+1)+'. '+safe(ex.name)+'</b><span>Regulagem: '+safe(ex.reg?.A)+' / '+safe(ex.reg?.F)+' / '+safe(ex.reg?.D)+' / '+safe(ex.reg?.E)+' / '+safe(ex.reg?.B)+'</span></div><div class="exercise-data"><div class="mini"><b>Carga (kg)</b><span>'+safe(ex.load)+'</span></div><div class="mini"><b>Séries</b><span>'+safe(ex.sets)+'</span></div><div class="mini"><b>Repetições</b><span>'+safe(ex.reps)+'</span></div><div class="mini"><b>Intervalo (s)</b><span>'+safe(ex.interval)+'</span></div><div class="mini"><b>Observação</b><span>'+safe(ex.obs)+'</span></div></div></div>'})});return h;
-  }
-  function aerobicBody(p,plan){const a=plan.aerobic||{};let h='<div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(plan.date?formatDate(plan.date):'—')+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(plan.professor)+'</span></div><h2>Prescrição</h2><div class="grid">';[['Modalidade',a.modality],['Frequência semanal',a.frequency!=null?a.frequency+' vezes/semana':null],['Duração',a.duration!=null?a.duration+' min':null],['Intensidade',a.intensity],['Objetivo',a.objective],['FCmáx estimada',a.fcMax],['FC repouso',a.fcRest],['FC reserva',a.fcReserve],['FC-alvo',a.fcTarget],['Velocidade',a.speed!=null?a.speed+' km/h':null],['Distância',a.distance!=null?a.distance+' km':null],['Carga / resistência',a.resistance],['Nível',a.level]].forEach(x=>h+='<div class="field"><b>'+safe(x[0])+'</b><span>'+safe(x[1])+'</span></div>');h+='</div>';if((a.functionalParts||[]).length)h+='<div class="field"><b>Treino funcional</b><span>'+a.functionalParts.map(safe).join(' • ')+'</span></div>';if(a.obs)h+='<div class="field" style="margin-top:8px"><b>Observações</b><span>'+safe(a.obs).replace(/\n/g,'<br>')+'</span></div>';return h}
-  if(typeof oldStrength==='function')window.printStrengthTrainingSheet=wrapPrint(oldStrength,'FICHA DE TREINAMENTO RESISTIDO',strengthBody);
-  if(typeof oldAerobic==='function')window.printAerobicTrainingSheet=wrapPrint(oldAerobic,'FICHA DE TREINAMENTO AERÓBICO',aerobicBody);
-  if(typeof oldComplete==='function')window.printCompleteTrainingSheet=function(){
-    const pid=(typeof currentTrainingPatientId!=='undefined'&&currentTrainingPatientId)?currentTrainingPatientId:(E('tPatient')?.value||''),p=getPatient(pid),photo=p?.photo||'',plan=(typeof currentTrainingPlan!=='undefined'&&currentTrainingPlan)?currentTrainingPlan:(typeof getTrainingPlan==='function'?getTrainingPlan(pid):null);
-    if(!p||!photo||!plan)return oldComplete.apply(this,arguments);
-    const w=window.open('','_blank','width=1000,height=800');if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para esta plataforma.');return}
-    const safe2=v=>String(v==null||v===''?'—':v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Ficha Completa de Treino</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;font-size:11px}.head{display:flex;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px}.patient-photo{width:82px;height:82px;object-fit:cover;border-radius:50%;border:2px solid #e05288}.title h1{color:#0753aa;margin:0}.patient,.field{border:1px solid #d8e3ea;padding:8px;border-radius:7px;margin:8px 0}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.exercise{border:1px solid #d7e2e8;padding:8px;margin:7px 0}.exercise-data{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.mini{background:#f7fafb;padding:5px}h2{color:#0753aa;font-size:14px}</style></head><body><div><button onclick="window.print()">Imprimir / Salvar como PDF</button></div><div class="head"><img class="patient-photo" src="'+photo+'"><div class="title"><h1>FICHA COMPLETA DE TREINO</h1><p>Moviment’ Up — Treinamento Inclusivo Adaptado · Casa de David</p></div></div>'+strengthBody(p,plan)+aerobicBody(p,plan)+'</body></html>');w.document.close();w.focus();
-  };
-})();
-</script>
-
-<script id="moviment-up-final-v115-active-and-photo-preservation">
-(function(){
-  'use strict';
-  // A Prescrição de Exercício deve ficar visualmente azul quando ativa.
-  const navTraining=document.querySelector('#nav button[onclick="show(\'training\')"]');
-  if(navTraining){
-    navTraining.classList.add('nav-training');
-    const mark=function(){
-      document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('nav-active'));
-      navTraining.classList.add('nav-active');
-    };
-    navTraining.addEventListener('click',function(){setTimeout(mark,0);});
-  }
-  // Se o paciente for aberto para edição, não perder a foto já cadastrada.
-  const oldEdit=window.editPatientClinical;
-  if(typeof oldEdit==='function'&&!window.__v115PhotoEditPreserve){
-    window.__v115PhotoEditPreserve=true;
-    window.editPatientClinical=function(pid){
-      const r=oldEdit.apply(this,arguments);
-      try{
-        const d=typeof getDB==='function'?getDB():(typeof db!=='undefined'?db:window.db);
-        const p=(d?.patients||[]).find(x=>String(x.id)===String(pid));
-        if(p){
-          window.currentPatientEditId=p.id;window.__currentPatientEditId=p.id;
-          const pv=document.getElementById('pPhotoPreview');
-          if(pv)pv.innerHTML=p.photo?'<img src="'+p.photo+'" alt="Foto do paciente cadastrada">':'';
-        }
-      }catch(_){ }
-      return r;
-    };
-  }
-})();
-</script>
-<style id="moviment-up-final-v115-training-blue">
-#nav button.nav-training.nav-active{background:linear-gradient(180deg,#2479dc,#0758b9)!important;box-shadow:inset 0 -1px #034b9e,0 1px 2px #0002!important;color:#fff!important}
+<style id="v12-foto-sync-final">
+#nav button[onclick="show('training')"].nav-active{background:linear-gradient(180deg,#2479dc,#0758b9)!important;color:#fff!important;box-shadow:inset 0 -1px #034b9e,0 1px 2px #0002!important}
+.patient-photo-preview img{width:96px!important;height:96px!important;object-fit:cover!important;border-radius:8px!important;display:block}
 </style>
-
-<script id="moviment-up-photo-size-migration-v116">
+<script id="v12-foto-sync-final">
 (function(){
-  function compressExistingPhotos(){
-    try{
-      const d=(typeof db!=='undefined'?db:window.db); if(!d||!Array.isArray(d.patients))return;
-      let pending=0, changed=false;
-      d.patients.forEach(p=>{
-        if(!p||typeof p.photo!=='string'||!p.photo.startsWith('data:image/')||p.photo.length<320000)return;
-        const img=new Image(); pending++;
-        img.onload=function(){
-          try{
-            const max=900,scale=Math.min(1,max/Math.max(img.naturalWidth||1,img.naturalHeight||1));
-            const c=document.createElement('canvas'); c.width=Math.max(1,Math.round(img.naturalWidth*scale)); c.height=Math.max(1,Math.round(img.naturalHeight*scale));
-            c.getContext('2d').drawImage(img,0,0,c.width,c.height);
-            let data=c.toDataURL('image/jpeg',0.72); if(data.length>320000)data=c.toDataURL('image/jpeg',0.58);
-            if(data.length<p.photo.length){p.photo=data;p.updatedAt=new Date().toISOString();changed=true;}
-          }catch(_){ }
-          if(--pending===0&&changed&&typeof persist==='function')persist();
-        };
-        img.onerror=function(){if(--pending===0&&changed&&typeof persist==='function')persist()};
-        img.src=p.photo;
-      });
-    }catch(_){ }
-  }
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(compressExistingPhotos,700));
-  else setTimeout(compressExistingPhotos,700);
+'use strict';
+const LOGO='data:image/png;base64,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';
+const $=id=>document.getElementById(id);
+const esc=v=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+function compress(file){return new Promise((resolve,reject)=>{if(!file)return resolve('');const r=new FileReader();r.onerror=()=>reject(new Error('Não foi possível ler a foto.'));r.onload=()=>{const im=new Image();im.onload=()=>{const max=900,s=Math.min(1,max/Math.max(im.naturalWidth||im.width,im.naturalHeight||im.height)),w=Math.max(1,Math.round((im.naturalWidth||im.width)*s)),h=Math.max(1,Math.round((im.naturalHeight||im.height)*s));const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(im,0,0,w,h);resolve(c.toDataURL('image/jpeg',.82));};im.onerror=()=>reject(new Error('Não foi possível processar a foto.'));im.src=r.result;};r.readAsDataURL(file);})}
+window.previewPatientPhoto=async function(input){const box=$('pPhotoPreview'),file=input?.files?.[0];if(!box)return;if(!file){box.innerHTML='';window.__pendingPatientPhoto='';return}try{const data=await compress(file);window.__pendingPatientPhoto=data;box.innerHTML='<img src="'+data+'" alt="Foto do paciente"><div class="small muted">Foto pronta para salvar.</div>';}catch(e){window.__pendingPatientPhoto='';box.innerHTML='<div class="notice danger">Não foi possível carregar a foto.</div>';}};
+function targetPatient(before,snap){const arr=db.patients||[];let p=arr.find(x=>!before.has(String(x.id)));if(p)return p;const iid=String(snap.internalId||'').trim(),name=String(snap.name||'').trim().toLowerCase();return arr.slice().reverse().find(x=>(iid&&String(x.internalId||'').trim()===iid)||(name&&String(x.name||'').trim().toLowerCase()===name))||null}
+const oldSave=window.savePatient;
+if(typeof oldSave==='function'){window.savePatient=async function(){const before=new Set((db.patients||[]).map(p=>String(p.id))),snap={name:$('pName')?.value||'',internalId:$('pId')?.value||''};let photo=window.__pendingPatientPhoto||'';const file=$('pPhoto')?.files?.[0];if(file&&!photo){try{photo=await compress(file)}catch(e){alert('Não foi possível carregar a foto do paciente.');return}}const result=await Promise.resolve(oldSave.apply(this,arguments));const p=targetPatient(before,snap);if(!p)return result;if(photo)p.photo=photo;p.updatedAt=new Date().toISOString();try{localStorage.setItem(KEY,JSON.stringify(db));}catch(e){console.warn('Não foi possível persistir a foto localmente',e)}const box=$('pPhotoPreview');if(box)box.innerHTML=p.photo?'<img src="'+esc(p.photo)+'" alt="Foto do paciente"><div class="small muted">Foto cadastrada.</div>':'';if($('pPhoto'))$('pPhoto').value='';window.__pendingPatientPhoto='';try{updateCounts?.();populateSelects?.();renderPatients?.()}catch(e){}return result}}
+function getPatient(){const pid=$('tPatient')?.value||'';return (db.patients||[]).find(p=>String(p.id)===String(pid))||null}
+function getPlan(pid){try{return typeof getTrainingPlan==='function'?getTrainingPlan(pid):((db.trainingPlans||[]).find(x=>String(x.patientId)===String(pid))||null)}catch(e){return null}}
+function printSheet(title,kind){const p=getPatient();if(!p){alert('Selecione um paciente antes de gerar a ficha de treino.');return}const plan=getPlan(p.id);if(!plan){alert('Este paciente ainda não possui uma prescrição salva. Salve a prescrição antes de gerar a ficha.');return}const v=x=>esc(x==null||x===''?'—':x);let body='<h2>Paciente</h2><div class="patient"><div><b>Paciente</b><span>'+v(p.name)+'</span></div><div><b>Unidade</b><span>'+v(p.unit)+'</span></div><div><b>Idade</b><span>'+v(p.age)+'</span></div></div>';if(kind!=='aerobic'){body+='<h2>Treinamento Resistido</h2>';['A','B','C','D','E'].forEach(w=>{const a=plan.strength?.[w]||[];if(!a.length)return;body+='<h3>Treino '+w+'</h3>';a.forEach(x=>body+='<div class="exercise"><b>'+v(x.name||'Exercício')+'</b><div>'+v(x.load)+' kg · '+v(x.sets)+' séries · '+v(x.reps)+' repetições · intervalo '+v(x.interval)+'</div>'+(x.obs?'<div class="obs">'+v(x.obs)+'</div>':'')+'</div>')})}if(kind!=='strength'){const a=plan.aerobic||{};body+='<h2>Treinamento Aeróbico</h2><div class="grid">'+[['Modalidade',a.modality],['Frequência',a.frequency],['Duração',a.duration],['Intensidade',a.intensity],['Objetivo',a.objective],['FC-alvo',a.fcTarget]].map(x=>'<div><b>'+v(x[0])+'</b><span>'+v(x[1])+'</span></div>').join('')+'</div>'}const w=window.open('','_blank','width=1000,height=800');if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para a plataforma.');return}w.document.open();w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+v(title)+'</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;font-size:11px}.no-print{margin-bottom:12px}.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}.logo{width:145px;height:58px;object-fit:contain}.patient-photo{width:100px;height:100px;object-fit:cover;border:1px solid #cfd6da;border-radius:8px;margin-left:auto}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.patient{display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px}.patient b,.grid b{display:block;font-size:8px;color:#66777e;text-transform:uppercase}.patient span,.grid span{font-weight:700}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.grid>div{border:1px solid #dce5ea;border-radius:6px;padding:7px}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.obs{font-size:9px;color:#4e626b;margin-top:4px}h2{font-size:14px;color:#0753aa;border-bottom:1px solid #dbe5eb;padding-bottom:4px}h3{font-size:12px;color:#0753aa}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}@media print{.no-print{display:none}}</style></head><body><div class="no-print"><button onclick="window.print()">Imprimir / Salvar como PDF</button> <button onclick="window.close()">Fechar</button></div><div class="head"><img class="logo" src="'+LOGO+'">'+(p.photo?'<img id="patientPhoto" class="patient-photo" src="'+p.photo+'" alt="Foto do paciente">':'')+'<div class="title"><h1>Moviment’ Up — Prescrição de Exercício</h1><div>Casa de David — Treinamento Inclusivo</div></div></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David.</div></body></html>');w.document.close();const im=w.document.getElementById('patientPhoto'),go=()=>{w.focus();w.print()};if(im&&!im.complete)im.onload=go;else setTimeout(go,300)}
+window.printStrengthTrainingSheet=()=>printSheet('Ficha do Treinamento Resistido','strength');window.printAerobicTrainingSheet=()=>printSheet('Ficha do Treinamento Aeróbico','aerobic');window.printCompleteTrainingSheet=()=>printSheet('Ficha Completa de Treino','complete');
+const tn=document.querySelector('#nav button[onclick="show(\'training\')"]');if(tn)tn.addEventListener('click',()=>setTimeout(()=>tn.classList.add('nav-active'),20));
 })();
 </script>
 </body>
