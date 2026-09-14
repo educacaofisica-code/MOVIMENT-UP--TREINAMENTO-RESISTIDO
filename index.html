@@ -550,7 +550,6 @@ a:hover{color:#e05288;}
   <button onclick="show('training')"><span>♮</span> Treinamento</button>
   <button class="nav-suggest" onclick="show('suggestion')"><span>✧</span> Sugestão de Treino</button>
   <button onclick="show('report')"><span>▤</span> Relatório / PDF</button>
-  <button onclick="show('backup')"><span>♙</span> Backup</button>
 </nav>
 <main>
 <section id="dashboard" class="view active">
@@ -596,6 +595,23 @@ a:hover{color:#e05288;}
 <option value="Apoio Generalizado — Generalizado">Apoio Generalizado — Generalizado</option>
 </select>
 </label>
+
+<div class="card inner-card patient-photo-card">
+  <div class="section-head"><div><h3>Foto do paciente</h3><p class="muted small">A foto fica vinculada ao mesmo cadastro e ao mesmo patientId.</p></div></div>
+  <div class="patient-photo-layout">
+    <div class="patient-photo-preview-wrap">
+      <div id="patientPhotoPlaceholder" class="patient-photo-placeholder">Sem foto</div>
+      <img id="patientPhotoPreview" class="patient-photo-preview hidden" alt="Foto do paciente">
+    </div>
+    <div class="patient-photo-actions">
+      <label>Selecionar foto
+        <input type="file" id="pPhoto" accept="image/*">
+      </label>
+      <button type="button" class="btn secondary" onclick="removePatientPhoto()">Remover foto</button>
+      <span id="patientPhotoMsg" class="small muted"></span>
+    </div>
+  </div>
+</div>
 
 <div class="card inner-card clinical-extension">
 <h3>Condição funcional e diagnósticos</h3>
@@ -854,13 +870,10 @@ a:hover{color:#e05288;}
 
 
 <section id="report" class="view">
-<div class="card"><h2>Relatório / PDF</h2><label>Paciente<select id="rPatient" onchange="renderReport()"></select></label><div class="actions"><button class="btn" onclick="renderReport();">Atualizar resultados</button><button class="btn" onclick="generatePatientPDF()">Imprimir / Salvar como PDF</button></div><div id="reportContent"><p class="muted">Selecione um paciente.</p></div></div>
+<div class="card"><h2>Relatório / PDF</h2><label>Paciente<select id="rPatient" onchange="renderReport()"></select></label><div class="actions"><button class="btn" onclick="renderReport();">Atualizar resultados</button><button class="btn" onclick="generatePatientPDF()">Abrir / Baixar PDF</button></div><div id="reportContent"><p class="muted">Selecione um paciente.</p></div></div>
 </section>
 
-<section id="backup" class="view">
-<div class="card"><h2>Backup</h2><p>Exporte todos os dados para um arquivo JSON. Para restaurar, selecione um backup criado pela plataforma.</p>
-<div class="actions"><button class="btn" onclick="exportBackup()">Exportar backup</button><label class="btn secondary" style="display:inline-block">Importar backup<input type="file" accept=".json" style="display:none" onchange="importBackup(event)"></label></div><div id="backupMsg"></div></div>
-</section>
+
 </main>
 
 <script>
@@ -1036,7 +1049,7 @@ function updateCounts(){document.getElementById('kPatients').textContent=db.pati
 function updatePatientNameSearch(){const dl=document.getElementById('patientNameList');if(!dl)return;const list=[...db.patients].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'pt-BR',{sensitivity:'base'}));dl.innerHTML=list.map(p=>`<option value="${esc(p.name)}"></option>`).join('')}
 
 function patientOptions(selId){let s=document.getElementById(selId);if(!s)return;let old=s.value;const list=[...db.patients].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'pt-BR',{sensitivity:'base'}));s.innerHTML='<option value="">Selecione</option>'+list.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');if(list.some(p=>p.id===old))s.value=old}
-function populateSelects(){['aPatient','hPatient','tPatient','rPatient'].forEach(patientOptions);renderPatients();renderTraining();updateCounts();updatePatientNameSearch()}
+function populateSelects(){['aPatient','hPatient','tPatient','rPatient'].forEach(patientOptions);updatePatientNameSearch()}
 function calcPatientAge(){
   if(!pBirth.value){pAge.value='';return}
   const birth=new Date(pBirth.value+'T00:00:00');
@@ -1846,8 +1859,6 @@ function renderReport(){
  renderTrainingReportHTML(pid)+
  `<div class="card"><h3>Treinamentos registrados</h3><p>${tr.length}</p></div>`;
 }
-function exportBackup(){let blob=new Blob([JSON.stringify(db,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='backup_casa_david_moviment_up.json';a.click();URL.revokeObjectURL(a.href);backupMsg.innerHTML='<div class="notice success">Backup exportado.</div>'}
-function importBackup(e){let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=()=>{try{let x=JSON.parse(r.result);if(!x.patients||!x.assessments||!x.training)throw Error();if(!confirm('Importar este backup? Os dados atuais serão substituídos.'))return;db=x;persist();backupMsg.innerHTML='<div class="notice success">Backup restaurado com sucesso.</div>'}catch(err){backupMsg.innerHTML='<div class="notice danger">Arquivo de backup inválido.</div>'}};r.readAsText(f)}
 function printReport(){
  const reportSelect=document.getElementById('rPatient');
  if(!reportSelect) return;
@@ -4897,7 +4908,7 @@ setTimeout(render,200);setTimeout(render,800);
       }
 
       if(remotePatientChanges||remoteAssessments.length)localSave();
-      refresh();
+      if(remotePatientChanges||remoteAssessments.length) refresh();
 
       /* Primeira sincronização: os dados remotos acabaram de ser incorporados.
          Não envia os dados locais antigos por cima deles. A partir do próximo
@@ -4921,7 +4932,8 @@ setTimeout(render,200);setTimeout(render,800);
         setStatus('online','ONLINE •  '+remotePatients.length+' pacientes sincronizados');
         console.log('Moviment Up — primeira sincronização concluída',{reason,remotePatients:remotePatients.length,remoteAssessments:remoteAssessments.length,duplicatasConsolidadas:(consolidated.duplicates||0)+(consolidatedAfter.duplicates||0)});
       }
-      refresh();
+      /* Não redesenhar a interface a cada ciclo de sincronização.
+         O redesenho só ocorre quando houve alteração remota acima. */
     }catch(err){
       console.error('Moviment Up — sincronização falhou',err);
       if(navigator.onLine===false)setStatus('offline','OFFLINE • dados salvos neste dispositivo');
@@ -5553,7 +5565,7 @@ window.saveHistoryTrainingLog=async function(id){const st=(db.training||[]).find
 window.deleteHistoryTrainingLog=async function(id,kind){const table=kind==='aerobic'?'aerobicLogs':'training';const arr=db[table]||[];const l=arr.find(x=>String(x.id)===String(id));if(!l)return;if(!confirm('Deseja realmente excluir este registro de treinamento?'))return;addTomb(table,id);let remoteDone=false;try{remoteDone=await remoteDelete(table,id)}catch(e){console.warn('Exclusão remota pendente',e)}db[table]=arr.filter(x=>String(x.id)!==String(id));touch(l.patientId);try{persist()}catch(e){}window.__historyEditActive=false;cancelHistoryTrainingEdit();window.renderHistory?.();if(remoteDone)delTomb(table,id)};
 function block(pid){const plan=planH(pid),logs=logsH(pid),st=logs.filter(l=>l.kind!=='aerobicDaily'),ae=logs.filter(l=>l.kind==='aerobicDaily'),pg=(db.trainingProgressions||[]).filter(x=>String(x.patientId)===String(pid)).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));let h=`<div class="card history-tools"><div class="section-head"><h3>Treinamento — Histórico e Prescrição</h3><div class="actions"><button type="button" class="btn" onclick="generateTrainingHistoryPDF('${escH(pid)}')">📄 Gerar PDF do histórico</button><button type="button" class="btn secondary" onclick="printHistoryTraining('${escH(pid)}')">🖨️ Imprimir</button>${plan?`<button type="button" class="btn" onclick="openHistoryPrescriptionEdit('${escH(pid)}')">✏️ Editar prescrição</button>`:''}</div></div>`;if(plan){h+=`<div class="notice"><b>Prescrição atual:</b> ${dateH(plan.date)} &nbsp;|&nbsp; <b>Professor:</b> ${escH(plan.professor||'—')}</div>`;if(plan.objectives?.length)h+=`<p><b>Objetivos:</b> ${escH(plan.objectives.join(', '))}</p>`;['A','B','C','D','E'].forEach(d=>{const exs=plan.strength?.[d]||[];if(!exs.length)return;h+=`<h4>Treino ${d}</h4><table class="history-training-table"><tr><th>Exercício</th><th>Carga</th><th>Séries</th><th>Repetições</th><th>Intervalo</th><th>Observações</th></tr>`;exs.forEach(x=>h+=`<tr><td>${escH(x.name||'—')}</td><td>${numH(x.load)||'—'}</td><td>${numH(x.sets)||'—'}</td><td>${numH(x.reps)||'—'}</td><td>${numH(x.interval)||'—'}</td><td>${escH(x.obs||'—')}</td></tr>`);h+='</table>'});const a=plan.aerobic||{};const rows=[['Modalidade',a.modality],['Frequência',a.frequency],['Duração',a.duration],['Intensidade',a.intensity],['Objetivo',a.objective],['FC-alvo',a.fcTarget],['FC máxima',a.fcMax],['FC repouso',a.fcRest],['FC de reserva',a.fcReserve],['Velocidade',a.speed],['Distância',a.distance],['Resistência',a.resistance],['Nível',a.level],['Observações',a.obs]].filter(r=>r[1]!=null&&r[1]!=='');if(rows.length)h+=`<h4>Treinamento aeróbico — prescrição atual</h4><table>${rows.map(r=>`<tr><th>${escH(r[0])}</th><td>${escH(r[1])}</td></tr>`).join('')}</table>`}else h+='<p class="muted">Nenhuma prescrição atual registrada para este paciente.</p>';h+='<div id="historyTrainingEdit"></div><hr>';
  h+='<h3>Treinamento Resistido — registros realizados</h3>';if(!st.length)h+='<p class="muted">Nenhum registro de treinamento resistido.</p>';else{h+='<table class="history-training-table"><tr><th>Data</th><th>Treino</th><th>Exercício</th><th>Carga</th><th>Séries</th><th>Reps.</th><th>RPE</th><th>Observações</th><th>Ações</th></tr>';st.forEach(l=>h+=`<tr><td>${dateH(l.date)}</td><td>${escH(l.workout||'—')}</td><td>${escH(l.exercise||'—')}</td><td>${numH(l.loadPerformed)||'—'}</td><td>${numH(l.setsPerformed)||'—'}</td><td>${numH(l.repsPerformed)||'—'}</td><td>${numH(l.rpe)||'—'}</td><td>${escH(l.obs||'—')}</td><td><button type="button" class="btn small" onclick="editHistoryTrainingLog('${escH(l.id)}')">✏️ Editar</button> <button type="button" class="btn small danger" onclick="deleteHistoryTrainingLog('${escH(l.id)}','strength')">🗑️ Excluir</button></td></tr>`);h+='</table>'}
- h+='<h3>Treinamento Aeróbico — registros realizados</h3>';if(!ae.length)h+='<p class="muted">Nenhum registro de treinamento aeróbico.</p>';else{h+='<table class="history-training-table"><tr><th>Data</th><th>Exercício / modalidade</th><th>Tempo</th><th>Distância</th><th>PACE</th><th>Intensidade</th><th>PES</th><th>Participação</th><th>Observação</th><th>Ações</th></tr>';ae.forEach(l=>h+=`<tr><td>${dateH(l.date)}</td><td>${escH(l.modality||l.exercise||'—')}</td><td>${numH(l.duration)||'—'}</td><td>${numH(l.distance)||'—'}</td><td>${escH(l.pace||'—')}</td><td>${escH(l.intensity||'—')}</td><td>${numH(l.rpe)||'—'}</td><td>${escH(l.participation||'PARTICIPOU')}</td><td>${escH(l.obs||'—')}</td><td><button type="button" class="btn small" onclick="editHistoryTrainingLog('${escH(l.id)}')">✏️ Editar</button> <button type="button" class="btn small danger" onclick="deleteHistoryTrainingLog('${escH(l.id)}','aerobic')">🗑️ Excluir</button></td></tr>`);h+='</table>';const yes=ae.filter(x=>String(x.participation||'PARTICIPOU').toUpperCase()!=='NÃO').length;h+=`<p class="small"><b>Adesão/participação aeróbica:</b> ${yes}/${ae.length} sessões (${Math.round(yes/ae.length*100)}%).</p>`}if(pg.length){h+='<h3>Histórico de alterações da prescrição</h3><table><tr><th>Data</th><th>Exercício/Registro</th><th>Tipo</th><th>Professor</th><th>Observação</th></tr>';pg.forEach(x=>h+=`<tr><td>${dateH(x.date)}</td><td>${escH(x.exerciseName||'Plano completo')}</td><td>${escH(x.type||'—')}</td><td>${escH(x.professor||'—')}</td><td>${escH(x.observation||'—')}</td></tr>`);h+='</table>'}return h+'</div>'}
+ h+='<h3>Treinamento Aeróbico — registros realizados</h3>';if(!ae.length)h+='<p class="muted">Nenhum registro de treinamento aeróbico.</p>';else{h+='<table class="history-training-table"><tr><th>Data</th><th>Exercício / modalidade</th><th>Tempo</th><th>Distância</th><th>PACE</th><th>Intensidade</th><th>PES</th><th>Observação</th><th>Ações</th></tr>';ae.forEach(l=>h+=`<tr><td>${dateH(l.date)}</td><td>${escH(l.modality||l.exercise||'—')}</td><td>${numH(l.duration)||'—'}</td><td>${numH(l.distance)||'—'}</td><td>${escH(l.pace||'—')}</td><td>${escH(l.intensity||'—')}</td><td>${numH(l.rpe)||'—'}</td><td>${escH(l.obs||'—')}</td><td><button type="button" class="btn small" onclick="editHistoryTrainingLog('${escH(l.id)}')">✏️ Editar</button> <button type="button" class="btn small danger" onclick="deleteHistoryTrainingLog('${escH(l.id)}','aerobic')">🗑️ Excluir</button></td></tr>`);h+='</table>';const yes=ae.filter(x=>String(x.participation||'PARTICIPOU').toUpperCase()!=='NÃO').length;h+=`<p class="small"><b>Adesão/participação aeróbica:</b> ${yes}/${ae.length} sessões (${Math.round(yes/ae.length*100)}%).</p>`}if(pg.length){h+='<h3>Histórico de alterações da prescrição</h3><table><tr><th>Data</th><th>Exercício/Registro</th><th>Tipo</th><th>Professor</th><th>Observação</th></tr>';pg.forEach(x=>h+=`<tr><td>${dateH(x.date)}</td><td>${escH(x.exerciseName||'Plano completo')}</td><td>${escH(x.type||'—')}</td><td>${escH(x.professor||'—')}</td><td>${escH(x.observation||'—')}</td></tr>`);h+='</table>'}return h+'</div>'}
 window.openHistoryPrescriptionEdit=function(pid){hOpenTraining(pid)};
 window.generateTrainingHistoryPDF=window.generateTrainingHistoryPDF||function(){};window.printHistoryTraining=window.printHistoryTraining||function(pid){window.generateTrainingHistoryPDF(pid)};
 const oldRender=window.renderHistory;window.renderHistory=function(){if(window.__historyEditActive)return;if(typeof oldRender==='function')oldRender();setTimeout(()=>{if(window.__historyEditActive)return;const pid=document.getElementById('hPatient')?.value,host=document.getElementById('historyContent');if(!host||!pid)return;host.querySelectorAll('.history-training-enhancement-host').forEach(x=>x.remove());const d=document.createElement('div');d.className='history-training-enhancement-host';d.innerHTML=block(pid);host.appendChild(d)},0)};
@@ -5624,5 +5636,213 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   }, true);
 })();
 </script>
+<style id="moviment-up-photo-fix">
+.patient-photo-card{margin-top:10px!important}
+.patient-photo-layout{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.patient-photo-preview-wrap{width:120px;height:145px;border:1px solid #cbdde7;border-radius:9px;background:#f7fbff;display:flex;align-items:center;justify-content:center;overflow:hidden;flex:0 0 auto}
+.patient-photo-placeholder{font-size:12px;color:#6a7d88;text-align:center}
+.patient-photo-preview{width:100%;height:100%;object-fit:cover;display:block}
+.patient-photo-actions{min-width:240px;display:grid;gap:8px}
+.patient-photo-actions input[type=file]{height:auto;padding:7px}
+</style>
+<script id="moviment-up-photo-fix-script">
+(function(){
+  'use strict';
+  const $=id=>document.getElementById(id);
+  let photoEditPatientId=null;
+  let photoDataPending=null;
+  let removePhotoPending=false;
+
+  function showPreview(data){
+    const img=$('patientPhotoPreview'),ph=$('patientPhotoPlaceholder');
+    if(!img||!ph)return;
+    if(data){img.src=data;img.classList.remove('hidden');ph.classList.add('hidden')}
+    else{img.removeAttribute('src');img.classList.add('hidden');ph.classList.remove('hidden')}
+  }
+  function resizeImage(file){
+    return new Promise((resolve,reject)=>{
+      const r=new FileReader();
+      r.onload=()=>{
+        const im=new Image();
+        im.onload=()=>{
+          const max=700,scale=Math.min(1,max/Math.max(im.width,im.height));
+          const c=document.createElement('canvas');c.width=Math.max(1,Math.round(im.width*scale));c.height=Math.max(1,Math.round(im.height*scale));
+          const ctx=c.getContext('2d');ctx.drawImage(im,0,0,c.width,c.height);
+          resolve(c.toDataURL('image/jpeg',0.82));
+        };
+        im.onerror=reject;im.src=r.result;
+      };
+      r.onerror=reject;r.readAsDataURL(file);
+    });
+  }
+  function bindInput(){
+    const input=$('pPhoto');if(!input||input.dataset.photoBound)return;
+    input.dataset.photoBound='1';
+    input.addEventListener('change',async()=>{
+      const f=input.files?.[0];if(!f)return;
+      if(!f.type.startsWith('image/')){alert('Selecione um arquivo de imagem.');input.value='';return}
+      try{photoDataPending=await resizeImage(f);removePhotoPending=false;showPreview(photoDataPending);if($('patientPhotoMsg'))$('patientPhotoMsg').textContent='Nova foto selecionada. Clique em Salvar paciente.'}
+      catch(e){console.error(e);alert('Não foi possível carregar esta foto.');input.value=''}
+    });
+  }
+  window.removePatientPhoto=function(){
+    photoDataPending=null;removePhotoPending=true;showPreview(null);
+    const input=$('pPhoto');if(input)input.value='';
+    if($('patientPhotoMsg'))$('patientPhotoMsg').textContent='A foto será removida ao salvar o cadastro.';
+  };
+  function loadPhoto(p){
+    photoDataPending=null;removePhotoPending=false;showPreview(p?.photoData||'');
+    const input=$('pPhoto');if(input)input.value='';
+    if($('patientPhotoMsg'))$('patientPhotoMsg').textContent=p?.photoData?'Foto cadastrada.':'Nenhuma foto cadastrada.';
+  }
+
+  const oldEdit=window.editPatientClinical;
+  if(typeof oldEdit==='function'&&!window.__movimentUpPhotoEditWrapped){
+    window.__movimentUpPhotoEditWrapped=true;
+    window.editPatientClinical=function(pid){
+      photoEditPatientId=String(pid||'');
+      const p=(typeof db!=='undefined'?db.patients:[]).find(x=>String(x.id)===photoEditPatientId);
+      oldEdit.apply(this,arguments);loadPhoto(p);bindInput();
+    };
+  }
+
+  const oldClear=window.clearPatient;
+  if(typeof oldClear==='function'&&!window.__movimentUpPhotoClearWrapped){
+    window.__movimentUpPhotoClearWrapped=true;
+    window.clearPatient=function(){
+      photoEditPatientId=null;photoDataPending=null;removePhotoPending=false;
+      oldClear.apply(this,arguments);loadPhoto(null);bindInput();
+    };
+  }
+
+  const oldSave=window.savePatient;
+  if(typeof oldSave==='function'&&!window.__movimentUpPhotoSaveWrapped){
+    window.__movimentUpPhotoSaveWrapped=true;
+    window.savePatient=function(){
+      const beforeIds=new Set((typeof db!=='undefined'?db.patients:[]).map(p=>String(p.id)));
+      const editId=photoEditPatientId;
+      const selected=photoDataPending;
+      const remove=removePhotoPending;
+      oldSave.apply(this,arguments);
+      const patients=(typeof db!=='undefined'?db.patients:[]);
+      let p=editId?patients.find(x=>String(x.id)===editId):patients.find(x=>!beforeIds.has(String(x.id)));
+      if(!p)return;
+      if(selected)p.photoData=selected;
+      else if(remove)delete p.photoData;
+      else if(!Object.prototype.hasOwnProperty.call(p,'photoData'))p.photoData='';
+      p.updatedAt=new Date().toISOString();
+      if(typeof persist==='function')persist();
+      photoEditPatientId=String(p.id);photoDataPending=null;removePhotoPending=false;
+      loadPhoto(p);bindInput();
+    };
+  }
+
+  function init(){bindInput();
+    const p=photoEditPatientId?(typeof db!=='undefined'?db.patients:[]).find(x=>String(x.id)===String(photoEditPatientId)):null;
+    if(p)loadPhoto(p);
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
+})();
+</script>
+
+<style id="moviment-up-final-stability-pdf">
+/* CORREÇÃO FINAL — elimina animação/refluxo visual causado por múltiplos renders. */
+.view.active{animation:none!important;transform:none!important}
+</style>
+<script id="moviment-up-final-stability-pdf-script">
+(function(){
+  'use strict';
+  /*
+   * ESTABILIDADE DA TELA:
+   * populateSelects() agora atualiza somente os seletores/lista de nomes.
+   * Os renders ficam restritos à aba ativa e às ações que realmente alteram dados.
+   * O sincronismo automático continua ativo, sem redesenhar toda a aplicação a cada ciclo.
+   */
+  window.__movimentUpStableUI=true;
+
+  function escPdf(v){
+    return String(v==null?'':v).replace(/\r/g,'').replace(/\t/g,' ');
+  }
+  function cpBytes(str){
+    const map={'€':0x80,'‚':0x82,'ƒ':0x83,'„':0x84,'…':0x85,'†':0x86,'‡':0x87,'ˆ':0x88,'‰':0x89,'Š':0x8A,'‹':0x8B,'Œ':0x8C,'Ž':0x8E,'‘':0x91,'’':0x92,'“':0x93,'”':0x94,'•':0x95,'–':0x96,'—':0x97,'˜':0x98,'™':0x99,'š':0x9A,'›':0x9B,'œ':0x9C,'ž':0x9E,'Ÿ':0x9F,
+      'á':0xE1,'à':0xE0,'â':0xE2,'ã':0xE3,'ä':0xE4,'ç':0xE7,'é':0xE9,'ê':0xEA,'í':0xED,'ó':0xF3,'ô':0xF4,'õ':0xF5,'ú':0xFA,'ü':0xFC,
+      'Á':0xC1,'À':0xC0,'Â':0xC2,'Ã':0xC3,'Ä':0xC4,'Ç':0xC7,'É':0xC9,'Ê':0xCA,'Í':0xCD,'Ó':0xD3,'Ô':0xD4,'Õ':0xD5,'Ú':0xDA,'Ü':0xDC,'ñ':0xF1,'Ñ':0xD1};
+    const out=[];for(const ch of String(str)){const c=ch.codePointAt(0);out.push(c<=255?c:(map[ch]??63));}return out;
+  }
+  function asciiBytes(s){return Array.from(unescape(encodeURIComponent(s))).map(c=>c.charCodeAt(0));}
+  function pdfTextBytes(str){const b=cpBytes(str),o=[40];for(const x of b){if(x===40||x===41||x===92)o.push(92,x);else o.push(x)}o.push(41);return o;}
+  function concat(chunks){let n=0;chunks.forEach(c=>n+=c.length);const out=new Uint8Array(n);let p=0;chunks.forEach(c=>{out.set(c,p);p+=c.length});return out;}
+  function makePdf(lines){
+    const W=595,H=842,M=42,leading=14,max=94,font=10.5;
+    const wrapped=[];
+    lines.forEach(raw=>{
+      let text=escPdf(raw);if(!text){wrapped.push('');return;}
+      while(text.length>max){let cut=text.lastIndexOf(' ',max);if(cut<20)cut=max;wrapped.push(text.slice(0,cut));text=text.slice(cut+1)}wrapped.push(text);
+    });
+    const pages=[];for(let i=0;i<wrapped.length;i+=51)pages.push(wrapped.slice(i,i+51));if(!pages.length)pages.push(['Relatório sem dados.']);
+    const obj=[];obj[1]='<< /Type /Catalog /Pages 2 0 R >>';obj[3]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';
+    const pids=[],cids=[];let id=5;pages.forEach(()=>{pids.push(id++);cids.push(id++)});
+    obj[2]='<< /Type /Pages /Kids ['+pids.map(x=>x+' 0 R').join(' ')+'] /Count '+pages.length+' >>';
+    pages.forEach((pg,i)=>{
+      let content='BT\n/F1 '+font+' Tf\n'+M+' '+(H-M)+' Td\n';
+      pg.forEach((line,j)=>{content+=String.fromCharCode(...pdfTextBytes(line))+' Tj\n';if(j<pg.length-1)content+='0 -'+leading+' Td\n'});content+='ET';
+      obj[pids[i]]='<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+W+' '+H+'] /Resources << /Font << /F1 3 0 R >> >> /Contents '+cids[i]+' 0 R >>';
+      obj[cids[i]]='<< /Length '+cpBytes(content).length+' >>\nstream\n'+content+'\nendstream';
+    });
+    const chunks=[asciiBytes('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n')],offs=[0];let pos=chunks[0].length;
+    for(let i=1;i<obj.length;i++){if(obj[i]==null)continue;offs[i]=pos;let a=asciiBytes(i+' 0 obj\n');chunks.push(a);pos+=a.length;let b=cpBytes(obj[i]);chunks.push(b);pos+=b.length;let e=asciiBytes('\nendobj\n');chunks.push(e);pos+=e.length;}
+    const x=pos;let xr='xref\n0 '+obj.length+'\n0000000000 65535 f \n';for(let i=1;i<obj.length;i++)xr+=(String(offs[i]||0).padStart(10,'0'))+' 00000 n \n';xr+='trailer\n<< /Size '+obj.length+' /Root 1 0 R >>\nstartxref\n'+x+'\n%%EOF';chunks.push(asciiBytes(xr));return concat(chunks);
+  }
+  function cleanLines(el){
+    if(!el)return [];
+    const clone=el.cloneNode(true);
+    clone.querySelectorAll('button,.actions,.history-edit-card,.screen-only').forEach(x=>x.remove());
+    return String(clone.innerText||clone.textContent||'').split(/\n+/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
+  }
+  function openAndDownload(lines,filename){
+    const bytes=makePdf(lines),blob=new Blob([bytes],{type:'application/pdf'}),url=URL.createObjectURL(blob);
+    let opened=null;try{opened=window.open(url,'_blank','noopener,noreferrer')}catch(e){opened=null}
+    const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+    if(!opened){
+      const msg=document.createElement('div');msg.className='notice success';msg.textContent='PDF gerado e baixado. Se a nova aba não abriu automaticamente, abra o arquivo pela pasta de downloads.';
+      document.body.appendChild(msg);setTimeout(()=>msg.remove(),5000);
+    }
+  }
+  function patientName(pid){const D=(typeof db!=='undefined'?db:window.db)||{};const p=(D.patients||[]).find(x=>String(x.id)===String(pid));return p?.name||'Paciente';}
+
+  /* RELATÓRIO / PDF — substitui o fluxo de impressão por um PDF real offline. */
+  window.generatePatientPDF=function(){
+    const sel=document.getElementById('rPatient'),pid=sel?.value||'';
+    if(!pid){alert('Selecione um paciente antes de gerar o PDF.');return}
+    try{
+      if(typeof window.renderReport==='function')window.renderReport();
+      const source=document.getElementById('reportContent');
+      const lines=['CASA DE DAVID — TABERNÁCULO ESPÍRITA PARA EXCEPCIONAIS',"MOVIMENT’ UP — TREINAMENTO RESISTIDO INCLUSIVO",'RELATÓRIO DO PACIENTE','Paciente: '+patientName(pid),'Data de emissão: '+new Date().toLocaleDateString('pt-BR'),''];
+      lines.push(...cleanLines(source));
+      openAndDownload(lines,'relatorio_moviment_up_'+patientName(pid).replace(/[^a-z0-9]+/gi,'_').replace(/^_|_$/g,'')+'.pdf');
+    }catch(e){console.error('PDF relatório:',e);alert('Não foi possível gerar o PDF. Os dados permanecem salvos.');}
+  };
+
+  /* HISTÓRICO + PRESCRIÇÃO — inclui a prescrição atual, registros realizados e progressões. */
+  window.generateTrainingHistoryPDF=function(pid){
+    pid=pid||document.getElementById('hPatient')?.value||'';
+    if(!pid){alert('Selecione um paciente na aba Histórico / Evolução.');return}
+    try{
+      if(document.getElementById('hPatient'))document.getElementById('hPatient').value=pid;
+      if(typeof window.renderHistory==='function')window.renderHistory();
+      const source=document.getElementById('historyContent');
+      const lines=['CASA DE DAVID — TABERNÁCULO ESPÍRITA PARA EXCEPCIONAIS',"MOVIMENT’ UP — TREINAMENTO RESISTIDO INCLUSIVO",'HISTÓRICO E PRESCRIÇÃO DE TREINAMENTO','Paciente: '+patientName(pid),'Data de emissão: '+new Date().toLocaleDateString('pt-BR'),''];
+      lines.push(...cleanLines(source));
+      openAndDownload(lines,'historico_prescricao_moviment_up_'+patientName(pid).replace(/[^a-z0-9]+/gi,'_').replace(/^_|_$/g,'')+'.pdf');
+    }catch(e){console.error('PDF histórico:',e);alert('Não foi possível gerar o PDF do histórico. Os dados permanecem salvos.');}
+  };
+  window.printHistoryTraining=function(pid){window.generateTrainingHistoryPDF(pid)};
+
+  /* Mantém o relatório sempre estável ao entrar na aba, sem múltiplos renders encadeados. */
+  window.__movimentUpPdfReady=true;
+})();
+</script>
+
 </body>
 </html>
