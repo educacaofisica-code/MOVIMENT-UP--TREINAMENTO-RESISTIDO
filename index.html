@@ -5249,7 +5249,11 @@ setTimeout(render,200);setTimeout(render,800);
     const list=(d.patients||[]).filter(p=>p&&p.id!=null&&changedPatientIds.has(String(p.id)));
     if(!list.length)return 0;
     const rows=list.map(p=>({id:String(p.id),data:patientPayload(p),created_at:p.createdAt||now(),updated_at:p.updatedAt||now()}));
-    const r=await fetch(URL+'/rest/v1/patients?on_conflict=id',{method:'POST',headers:headers({'Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(rows)});
+    const body=JSON.stringify(rows);
+    const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),25000);
+    let r; try{
+      r=await fetch(URL+'/rest/v1/patients?on_conflict=id',{method:'POST',headers:headers({'Prefer':'resolution=merge-duplicates,return=minimal','Cache-Control':'no-cache'}),body,cache:'no-store',credentials:'omit',signal:controller.signal});
+    }finally{clearTimeout(timer)}
     if(!r.ok)throw new Error('patients UPSERT '+r.status+' '+await r.text().catch(()=>'') );
     return rows.length;
   }
@@ -5330,7 +5334,11 @@ setTimeout(render,200);setTimeout(render,800);
     }catch(err){
       console.error('Moviment Up — sincronização falhou',err);
       if(navigator.onLine===false)setStatus('offline','OFFLINE • dados salvos neste dispositivo');
-      else setStatus('error','ONLINE • erro ao sincronizar: '+(err.message||'verifique a conexão'));
+      else {
+        const msg=String(err.message||'verifique a conexão');
+        if(msg.includes('57014')||msg.toLowerCase().includes('statement timeout')) setStatus('error','ONLINE • Supabase demorou para processar o cadastro; dados permanecem salvos localmente');
+        else setStatus('error','ONLINE • erro ao sincronizar: '+msg);
+      }
     }finally{syncing=false}
   }
 
@@ -6219,8 +6227,22 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
     if(!file.type||!file.type.startsWith('image/')){alert('Selecione uma imagem válida.');input.value='';return;}
     const reader=new FileReader();
     reader.onload=function(){
-      window.__pendingPatientPhoto=reader.result;
-      if(preview)preview.innerHTML='<img src="'+reader.result+'" alt="Pré-visualização da foto">';
+      const src=reader.result;
+      const img=new Image();
+      img.onload=function(){
+        const max=900, scale=Math.min(1,max/Math.max(img.naturalWidth||img.width||1,img.naturalHeight||img.height||1));
+        const w=Math.max(1,Math.round((img.naturalWidth||img.width)*scale));
+        const h=Math.max(1,Math.round((img.naturalHeight||img.height)*scale));
+        const c=document.createElement('canvas'); c.width=w; c.height=h;
+        c.getContext('2d').drawImage(img,0,0,w,h);
+        let data=c.toDataURL('image/jpeg',0.78);
+        if(data.length>320000)data=c.toDataURL('image/jpeg',0.62);
+        window.__pendingPatientPhoto=data;
+        if(input)input.dataset.dataUrl=data;
+        if(preview)preview.innerHTML='<img src="'+data+'" alt="Pré-visualização da foto">';
+      };
+      img.onerror=function(){window.__pendingPatientPhoto=src;if(preview)preview.innerHTML='<img src="'+src+'" alt="Pré-visualização da foto">';};
+      img.src=src;
     };
     reader.readAsDataURL(file);
   };
@@ -6264,20 +6286,11 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
       else if(typeof renderPatients==='function')renderPatients();
       if(typeof populateSelects==='function')populateSelects();
 
-      /* Se houver conexão, envia também a versão final (incluindo a foto) ao Supabase. */
-      if(navigator.onLine && typeof SUPABASE_URL!=='undefined' && typeof SUPABASE_KEY!=='undefined'){
-        try{
-          const row={id:String(target.id),data:(typeof patientPayload==='function'?patientPayload(target):target),created_at:target.createdAt||new Date().toISOString(),updated_at:target.updatedAt};
-          const r=await fetch(SUPABASE_URL+'/rest/v1/patients?on_conflict=id',{
-            method:'POST',headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify([row])
-          });
-          if(!r.ok)console.error('SUPABASE FOTO/PACIENTE:',r.status,await r.text().catch(()=>''));
-        }catch(e){console.warn('Supabase foto do paciente:',e)}
-      }
+      /* A sincronização é feita exclusivamente pelo mecanismo central após persist(). */
     }catch(e){console.warn('Foto do paciente:',e)}
 
     window.__pendingPatientPhoto='';
-    const input=el('pPhoto');if(input)input.value='';
+    const input=el('pPhoto');if(input){input.value='';delete input.dataset.dataUrl;}
     return result;
   };
 
@@ -6321,39 +6334,10 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
     set('pName',p.name);set('pId',p.internalId);set('pBirth',p.birth);set('pAge',p.age!=null?p.age+' anos':'');
     set('pSex',p.sex);set('pUnit',p.unit);set('pSupport',p.supportLevel);set('pObs',p.obs);
     const pv=E('pPhotoPreview');if(pv)pv.innerHTML=p.photo?'<img src="'+p.photo+'" alt="Foto do paciente cadastrada">':'';
-    const inp=E('pPhoto');if(inp)inp.value='';
+    const inp=E('pPhoto');if(inp){inp.value='';delete inp.dataset.dataUrl;}
     if(typeof renderClinicalForm==='function')try{renderClinicalForm()}catch(_){ }
   };
-  // Última camada: garante que a foto entre no objeto do paciente e seja persistida
-  // depois do salvamento normal, sem substituir a lógica de cadastro existente.
-  const baseSave=window.savePatient;
-  if(typeof baseSave==='function'&&!window.__finalPhotoSaveFix){
-    window.__finalPhotoSaveFix=true;
-    window.savePatient=async function(){
-      const d=currentDB();
-      const before=new Set((d?.patients||[]).map(p=>String(p.id)));
-      const editId=window.currentPatientEditId||window.__currentPatientEditId||'';
-      const photo=window.__pendingPatientPhoto||E('pPhoto')?.dataset?.dataUrl||'';
-      const name=(E('pName')?.value||'').trim();
-      const result=baseSave.apply(this,arguments);
-      await Promise.resolve(result);
-      const d2=currentDB();
-      const arr=d2?.patients||[];
-      let target=editId?arr.find(p=>String(p.id)===String(editId)):null;
-      if(!target)target=arr.find(p=>!before.has(String(p.id)));
-      if(!target&&name)target=arr.slice().reverse().find(p=>String(p.name||'').trim()===name);
-      if(!target)return result;
-      if(photo)target.photo=photo;
-      target.updatedAt=new Date().toISOString();
-      if(typeof persist==='function')persist();
-      window.currentPatientEditId=target.id;window.__currentPatientEditId=target.id;
-      restore(target);
-      if(typeof renderPatients==='function')try{renderPatients()}catch(_){ }
-      if(typeof populateSelects==='function')try{populateSelects()}catch(_){ }
-      return result;
-    };
-  }
-
+  // O salvamento do paciente permanece em uma única cadeia; não criar um segundo wrapper.
   // Ficha de treino: acrescenta automaticamente a foto já cadastrada no paciente.
   const oldStrength=window.printStrengthTrainingSheet;
   const oldAerobic=window.printAerobicTrainingSheet;
@@ -6440,5 +6424,34 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
 <style id="moviment-up-final-v115-training-blue">
 #nav button.nav-training.nav-active{background:linear-gradient(180deg,#2479dc,#0758b9)!important;box-shadow:inset 0 -1px #034b9e,0 1px 2px #0002!important;color:#fff!important}
 </style>
+
+<script id="moviment-up-photo-size-migration-v116">
+(function(){
+  function compressExistingPhotos(){
+    try{
+      const d=(typeof db!=='undefined'?db:window.db); if(!d||!Array.isArray(d.patients))return;
+      let pending=0, changed=false;
+      d.patients.forEach(p=>{
+        if(!p||typeof p.photo!=='string'||!p.photo.startsWith('data:image/')||p.photo.length<320000)return;
+        const img=new Image(); pending++;
+        img.onload=function(){
+          try{
+            const max=900,scale=Math.min(1,max/Math.max(img.naturalWidth||1,img.naturalHeight||1));
+            const c=document.createElement('canvas'); c.width=Math.max(1,Math.round(img.naturalWidth*scale)); c.height=Math.max(1,Math.round(img.naturalHeight*scale));
+            c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+            let data=c.toDataURL('image/jpeg',0.72); if(data.length>320000)data=c.toDataURL('image/jpeg',0.58);
+            if(data.length<p.photo.length){p.photo=data;p.updatedAt=new Date().toISOString();changed=true;}
+          }catch(_){ }
+          if(--pending===0&&changed&&typeof persist==='function')persist();
+        };
+        img.onerror=function(){if(--pending===0&&changed&&typeof persist==='function')persist()};
+        img.src=p.photo;
+      });
+    }catch(_){ }
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(compressExistingPhotos,700));
+  else setTimeout(compressExistingPhotos,700);
+})();
+</script>
 </body>
 </html>
