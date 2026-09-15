@@ -6367,3 +6367,133 @@ if(tsel)tsel.addEventListener('change',()=>window.__v16HydrateCurrentTrainingPho
 window.__v16HydrateCurrentTrainingPhoto();
 })();
 </script>
+
+
+<style id="v17-photo-local-final">
+#nav button[onclick="show('training')"].nav-active{background:linear-gradient(180deg,#2479dc,#0758b9)!important;color:#fff!important}
+#v17PrescriptionPhoto{display:block;width:96px;height:96px;object-fit:cover;border-radius:8px;border:1px solid #cfd6da;margin-top:6px}
+</style>
+<script id="v17-photo-local-final-script">
+(function(){
+'use strict';
+const PHOTO_KEY='moviment_up_patient_photos_local_v2';
+const $id=id=>document.getElementById(id);
+function esc17(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function readPhotoMap(){try{const x=JSON.parse(localStorage.getItem(PHOTO_KEY)||'{}');return x&&typeof x==='object'?x:{}}catch(e){return {}}}
+function writePhoto(pid,photo){
+  if(!pid||!photo)return false;
+  try{const m=readPhotoMap();m[String(pid)]=photo;localStorage.setItem(PHOTO_KEY,JSON.stringify(m));return true}catch(e){console.warn('Foto local: falha ao salvar',e);return false}
+}
+function readPhoto(pid){try{return readPhotoMap()[String(pid)]||''}catch(e){return ''}}
+function removePhoto(pid){try{const m=readPhotoMap();delete m[String(pid)];localStorage.setItem(PHOTO_KEY,JSON.stringify(m))}catch(e){}}
+function hydrate(){
+  try{(db.patients||[]).forEach(p=>{if(!p.photo){const ph=readPhoto(p.id);if(ph)p.photo=ph}});}
+  catch(e){}
+}
+function compress17(file){
+ return new Promise((resolve,reject)=>{
+  if(!file)return resolve('');
+  const r=new FileReader();
+  r.onerror=()=>reject(Error('Não foi possível ler a foto.'));
+  r.onload=()=>{
+   const im=new Image();
+   im.onerror=()=>reject(Error('Não foi possível processar a foto.'));
+   im.onload=()=>{
+    const max=600, scale=Math.min(1,max/Math.max(im.naturalWidth||im.width,im.naturalHeight||im.height));
+    const w=Math.max(1,Math.round((im.naturalWidth||im.width)*scale)),h=Math.max(1,Math.round((im.naturalHeight||im.height)*scale));
+    const c=document.createElement('canvas');c.width=w;c.height=h;
+    const ctx=c.getContext('2d');ctx.drawImage(im,0,0,w,h);
+    resolve(c.toDataURL('image/jpeg',.68));
+   };
+   im.src=r.result;
+  };
+  r.readAsDataURL(file);
+ });
+}
+window.previewPatientPhoto=async function(input){
+ const box=$id('pPhotoPreview'),file=input?.files?.[0];
+ if(!box)return;
+ if(!file){box.innerHTML='';window.__pendingPatientPhoto='';return}
+ try{const data=await compress17(file);window.__pendingPatientPhoto=data;box.innerHTML='<img id="v17PrescriptionPhoto" src="'+esc17(data)+'" alt="Foto do paciente"><div class="small muted">Foto pronta para salvar.</div>'}
+ catch(e){window.__pendingPatientPhoto='';box.innerHTML='<div class="notice danger">Não foi possível carregar a foto.</div>'}
+};
+
+// Recupera fotos sem depender de IndexedDB (funciona também quando o HTML é aberto localmente).
+hydrate();
+
+const previousSave=window.savePatient;
+if(typeof previousSave==='function'){
+ window.savePatient=async function(){
+  const before=new Set((db.patients||[]).map(p=>String(p.id)));
+  const snap={name:$id('pName')?.value||'',internalId:$id('pId')?.value||''};
+  let photo=window.__pendingPatientPhoto||'';
+  const file=$id('pPhoto')?.files?.[0];
+  if(file&&!photo){try{photo=await compress17(file)}catch(e){alert('Não foi possível carregar a foto do paciente.');return}}
+  const result=await Promise.resolve(previousSave.apply(this,arguments));
+  const arr=db.patients||[];
+  let patient=arr.find(p=>!before.has(String(p.id)))||null;
+  if(!patient){
+   const iid=String(snap.internalId).trim(),name=String(snap.name).trim().toLowerCase();
+   patient=arr.slice().reverse().find(p=>(iid&&String(p.internalId||'').trim()===iid)||(name&&String(p.name||'').trim().toLowerCase()===name))||null;
+  }
+  if(!patient)return result;
+  if(photo)patient.photo=photo;
+  if(patient.photo){
+   const ok=writePhoto(patient.id,patient.photo);
+   if(!ok){
+    const msg=$id('patientMsg');if(msg)msg.innerHTML='<div class="notice danger">A foto foi carregada, mas o navegador não permitiu o armazenamento local da foto.</div>';
+   }
+  }
+  const box=$id('pPhotoPreview');
+  if(box&&patient.photo)box.innerHTML='<img id="v17PrescriptionPhoto" src="'+esc17(patient.photo)+'" alt="Foto do paciente"><div class="small muted">Foto cadastrada.</div>';
+  window.__pendingPatientPhoto='';
+  try{if($id('pPhoto'))$id('pPhoto').value='';updateCounts?.();populateSelects?.();renderPatients?.()}catch(e){}
+  // Garante que a atualização da foto seja refletida no fluxo normal de sincronização.
+  try{if(typeof persist==='function')persist();}catch(e){}
+  return result;
+ };
+}
+
+async function getPatientPhoto17(pid){
+ const p=(db.patients||[]).find(x=>String(x.id)===String(pid));
+ let photo=p?.photo||readPhoto(pid);
+ if(photo&&p&&!p.photo)p.photo=photo;
+ return photo||'';
+}
+function plan17(pid){try{return typeof getTrainingPlan==='function'?getTrainingPlan(pid):((db.trainingPlans||[]).find(x=>String(x.patientId)===String(pid))||null)}catch(e){return null}}
+function escHtml17(v){return esc17(v==null||v===''?'—':v)}
+async function print17(title,kind){
+ const pid=String($id('tPatient')?.value||'');
+ const p=(db.patients||[]).find(x=>String(x.id)===pid)||null;
+ if(!p){alert('Selecione um paciente antes de gerar a ficha de treino.');return}
+ const plan=plan17(pid);if(!plan){alert('Este paciente ainda não possui uma prescrição salva. Salve a prescrição antes de gerar a ficha.');return}
+ const photo=await getPatientPhoto17(pid);
+ if(!photo){alert('Este paciente não possui uma foto cadastrada. Volte ao Cadastro, selecione a foto e salve novamente.');return}
+ const logo=$id('tPatient')?document.querySelector('.brand-logo')?.src||'':'';
+ let body='<h2>Paciente</h2><div class="patient"><div><b>Paciente</b><span>'+escHtml17(p.name)+'</span></div><div><b>Unidade</b><span>'+escHtml17(p.unit)+'</span></div><div><b>Idade</b><span>'+escHtml17(p.age)+'</span></div></div>';
+ if(kind!=='aerobic'){
+  body+='<h2>Treinamento Resistido</h2>';
+  ['A','B','C','D','E'].forEach(w=>{const a=plan.strength?.[w]||[];if(!a.length)return;body+='<h3>Treino '+w+'</h3>';a.forEach(x=>body+='<div class="exercise"><b>'+escHtml17(x.name||'Exercício')+'</b><div>'+escHtml17(x.load)+' kg · '+escHtml17(x.sets)+' séries · '+escHtml17(x.reps)+' repetições · intervalo '+escHtml17(x.interval)+'</div>'+(x.obs?'<div class="obs">'+escHtml17(x.obs)+'</div>':'')+'</div>')});
+ }
+ if(kind!=='strength'){
+  const a=plan.aerobic||{};body+='<h2>Treinamento Aeróbico</h2><div class="grid">'+[['Modalidade',a.modality],['Frequência',a.frequency],['Duração',a.duration],['Intensidade',a.intensity],['Objetivo',a.objective],['FC-alvo',a.fcTarget]].map(x=>'<div><b>'+escHtml17(x[0])+'</b><span>'+escHtml17(x[1])+'</span></div>').join('')+'</div>';
+ }
+ const w=window.open('','_blank','width=1000,height=800');
+ if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para a plataforma.');return}
+ const safePhoto=esc17(photo),safeLogo=esc17(logo);
+ const html='<!doctype html><html><head><meta charset="utf-8"><title>'+escHtml17(title)+'</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;font-size:11px}.no-print{margin-bottom:12px}.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}.logo{width:145px;height:58px;object-fit:contain}.patient-photo{display:block;width:100px;height:100px;object-fit:cover;border:1px solid #cfd6da;border-radius:8px;margin-left:auto;flex:0 0 auto}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.patient{display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px}.patient b,.grid b{display:block;font-size:8px;color:#66777e;text-transform:uppercase}.patient span,.grid span{font-weight:700}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.grid>div{border:1px solid #dce5ea;border-radius:6px;padding:7px}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.obs{font-size:9px;color:#4e626b;margin-top:4px}h2{font-size:14px;color:#0753aa;border-bottom:1px solid #dbe5eb;padding-bottom:4px}h3{font-size:12px;color:#0753aa}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}@media print{.no-print{display:none}}</style></head><body><div class="no-print"><button onclick="window.print()">Imprimir / Salvar como PDF</button> <button onclick="window.close()">Fechar</button></div><div class="head">'+(logo?'<img class="logo" src="'+safeLogo+'">':'')+'<img id="patientPhoto" class="patient-photo" src="'+safePhoto+'" alt="Foto do paciente"><div class="title"><h1>Moviment’ Up — Prescrição de Exercício</h1><div>Casa de David — Treinamento Inclusivo</div></div></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David.</div></body></html>';
+ w.document.open();w.document.write(html);w.document.close();
+ const im=w.document.getElementById('patientPhoto');
+ const go=()=>{if(w.__v17Printed)return;w.__v17Printed=true;w.focus();setTimeout(()=>w.print(),300)};
+ if(im){if(im.complete&&im.naturalWidth>0)go();else{im.onload=go;im.onerror=()=>alert('A foto foi encontrada, mas o navegador não conseguiu carregá-la na ficha.');setTimeout(()=>{if(im.complete&&im.naturalWidth>0)go()},4000)}}else go();
+}
+window.printStrengthTrainingSheet=()=>print17('Ficha do Treinamento Resistido','strength');
+window.printAerobicTrainingSheet=()=>print17('Ficha do Treinamento Aeróbico','aerobic');
+window.printCompleteTrainingSheet=()=>print17('Ficha Completa de Treino','complete');
+
+// Ao selecionar o paciente na Prescrição, garante que a foto esteja disponível no objeto atual.
+const sel=$id('tPatient');
+if(sel)sel.addEventListener('change',async()=>{const p=(db.patients||[]).find(x=>String(x.id)===String(sel.value));if(p&&!p.photo){const ph=readPhoto(p.id);if(ph)p.photo=ph}setTimeout(()=>sel.classList.remove('photo-loading'),0)});
+setTimeout(hydrate,200);
+})();
+</script>
