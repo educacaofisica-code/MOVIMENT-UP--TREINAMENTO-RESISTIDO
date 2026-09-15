@@ -6140,5 +6140,57 @@ window.printStrengthTrainingSheet=()=>printSheet('Ficha do Treinamento Resistido
 const tn=document.querySelector('#nav button[onclick="show(\'training\')"]');if(tn)tn.addEventListener('click',()=>setTimeout(()=>tn.classList.add('nav-active'),20));
 })();
 </script>
+<style id="v13-photo-pdf-fix">
+.patient-photo{display:block!important;width:100px!important;height:100px!important;object-fit:cover!important;border:1px solid #cfd6da!important;border-radius:8px!important;margin-left:auto!important}
+</style>
+<script id="v13-photo-pdf-fix-script">
+(function(){
+'use strict';
+const PDB='moviment_up_patient_photos_v1', STORE='photos';
+function openPDB(){return new Promise((resolve,reject)=>{if(!window.indexedDB)return reject(Error('IndexedDB indisponível'));const r=indexedDB.open(PDB,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE,{keyPath:'patientId'})};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error||Error('Falha IndexedDB'))})}
+function putPhoto(id,photo){return openPDB().then(d=>new Promise((res,rej)=>{const t=d.transaction(STORE,'readwrite');t.objectStore(STORE).put({patientId:String(id),photo,updatedAt:Date.now()});t.oncomplete=()=>{d.close();res()};t.onerror=()=>{d.close();rej(t.error||Error('Falha ao salvar foto'))}}))}
+function getAllPhotos(){return openPDB().then(d=>new Promise((res,rej)=>{const t=d.transaction(STORE,'readonly'),q=t.objectStore(STORE).getAll();q.onsuccess=()=>{const a=q.result||[];d.close();res(a)};q.onerror=()=>{d.close();rej(q.error||Error('Falha ao ler fotos'))}}))}
+async function hydratePhotos(){try{const rows=await getAllPhotos(),m=new Map(rows.map(x=>[String(x.patientId),x.photo]));(db.patients||[]).forEach(p=>{const ph=m.get(String(p.id));if(ph)p.photo=ph});if(typeof populateSelects==='function')populateSelects();if(typeof renderPatients==='function')renderPatients()}catch(e){console.warn('Fotos: não foi possível carregar do armazenamento local',e)}}
+window.__savePatientPhotosToIDB=async function(){const ps=(db.patients||[]).filter(p=>p&&p.id&&p.photo);await Promise.all(ps.map(p=>putPhoto(p.id,p.photo).catch(e=>console.warn('Foto não salva',e))));};
+window.__loadPatientPhotosFromIDB=hydratePhotos;
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(hydratePhotos,100));else setTimeout(hydratePhotos,100);
+
+// Reforça o salvamento da foto sem alterar o cadastro nem duplicar registros.
+const prevSave=window.savePatient;
+if(typeof prevSave==='function')window.savePatient=async function(){
+ const before=new Set((db.patients||[]).map(p=>String(p.id))),name=document.getElementById('pName')?.value||'',iid=document.getElementById('pId')?.value||'';
+ let photo=window.__pendingPatientPhoto||'';
+ const f=document.getElementById('pPhoto')?.files?.[0];
+ if(f&&!photo){try{photo=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(f)})}catch(e){return prevSave.apply(this,arguments)}}
+ const result=await Promise.resolve(prevSave.apply(this,arguments));
+ let p=(db.patients||[]).find(x=>!before.has(String(x.id)));
+ if(!p){const n=String(name).trim().toLowerCase(),i=String(iid).trim().toLowerCase();p=(db.patients||[]).slice().reverse().find(x=>(i&&String(x.internalId||'').trim().toLowerCase()===i)||(n&&String(x.name||'').trim().toLowerCase()===n))||null}
+ if(p&&photo)p.photo=photo;
+ if(p&&p.photo)await putPhoto(p.id,p.photo).catch(e=>console.warn('Foto: falha no armazenamento local',e));
+ if(p){try{const box=document.getElementById('pPhotoPreview');if(box)box.innerHTML='<img src="'+String(p.photo||'').replace(/"/g,'&quot;')+'" alt="Foto do paciente"><div class="small muted">Foto cadastrada.</div>'}catch(e){}}
+ return result;
+};
+
+function currentPatient(){const pid=document.getElementById('tPatient')?.value||'';return (db.patients||[]).find(p=>String(p.id)===String(pid))||null}
+function currentPlan(pid){try{return typeof getTrainingPlan==='function'?getTrainingPlan(pid):((db.trainingPlans||[]).find(x=>String(x.patientId)===String(pid))||null)}catch(e){return null}}
+function escV(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+function printTraining(title,kind){
+ const p=currentPatient();
+ if(!p){alert('Selecione um paciente antes de gerar a ficha de treino.');return}
+ const plan=currentPlan(p.id);if(!plan){alert('Este paciente ainda não possui uma prescrição salva. Salve a prescrição antes de gerar a ficha.');return}
+ const logo=document.querySelector('.brand-logo')?.src||'';const photo=p.photo||'';const v=x=>escV(x==null||x===''?'—':x);
+ let body='<h2>Paciente</h2><div class="patient"><div><b>Paciente</b><span>'+v(p.name)+'</span></div><div><b>Unidade</b><span>'+v(p.unit)+'</span></div><div><b>Idade</b><span>'+v(p.age)+'</span></div></div>';
+ if(kind!=='aerobic'){body+='<h2>Treinamento Resistido</h2>';['A','B','C','D','E'].forEach(w=>{const a=plan.strength?.[w]||[];if(!a.length)return;body+='<h3>Treino '+w+'</h3>';a.forEach(x=>body+='<div class="exercise"><b>'+v(x.name||'Exercício')+'</b><div>'+v(x.load)+' kg · '+v(x.sets)+' séries · '+v(x.reps)+' repetições · intervalo '+v(x.interval)+'</div>'+(x.obs?'<div class="obs">'+v(x.obs)+'</div>':'')+'</div>')})}
+ if(kind!=='strength'){const a=plan.aerobic||{};body+='<h2>Treinamento Aeróbico</h2><div class="grid">'+[['Modalidade',a.modality],['Frequência',a.frequency],['Duração',a.duration],['Intensidade',a.intensity],['Objetivo',a.objective],['FC-alvo',a.fcTarget]].map(x=>'<div><b>'+v(x[0])+'</b><span>'+v(x[1])+'</span></div>').join('')+'</div>'}
+ const w=window.open('','_blank','width=1000,height=800');if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para a plataforma.');return}
+ const photoHTML=photo?'<img id="patientPhoto" class="patient-photo" src="'+photo+'" alt="Foto do paciente">':'';
+ w.document.open();w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+v(title)+'</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;font-size:11px}.no-print{margin-bottom:12px}.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}.logo{width:145px;height:58px;object-fit:contain}.patient-photo{width:100px;height:100px;object-fit:cover;border:1px solid #cfd6da;border-radius:8px;margin-left:auto}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.patient{display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px}.patient b,.grid b{display:block;font-size:8px;color:#66777e;text-transform:uppercase}.patient span,.grid span{font-weight:700}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.grid>div{border:1px solid #dce5ea;border-radius:6px;padding:7px}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.obs{font-size:9px;color:#4e626b;margin-top:4px}h2{font-size:14px;color:#0753aa;border-bottom:1px solid #dbe5eb;padding-bottom:4px}h3{font-size:12px;color:#0753aa}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}@media print{.no-print{display:none}}</style></head><body><div class="no-print"><button onclick="window.print()">Imprimir / Salvar como PDF</button> <button onclick="window.close()">Fechar</button></div><div class="head">'+(logo?'<img class="logo" src="'+logo+'">':'')+photoHTML+'<div class="title"><h1>Moviment’ Up — Prescrição de Exercício</h1><div>Casa de David — Treinamento Inclusivo</div></div></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David.</div></body></html>');w.document.close();
+ const im=w.document.getElementById('patientPhoto');const go=()=>{w.focus();setTimeout(()=>w.print(),250)};if(im){if(im.complete&&im.naturalWidth>0)go();else{im.onload=go;setTimeout(go,2500)}}else go();
+}
+window.printStrengthTrainingSheet=()=>printTraining('Ficha do Treinamento Resistido','strength');
+window.printAerobicTrainingSheet=()=>printTraining('Ficha do Treinamento Aeróbico','aerobic');
+window.printCompleteTrainingSheet=()=>printTraining('Ficha Completa de Treino','complete');
+})();
+</script>
 </body>
 </html>
