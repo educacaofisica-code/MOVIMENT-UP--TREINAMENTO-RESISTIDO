@@ -840,7 +840,7 @@ nav#nav{
 <div class="card"><h2>Cadastro do Paciente</h2>
 <div class="grid">
 <label>Nome completo<input id="pName" list="patientNameList" autocomplete="off" placeholder="Digite ou selecione o nome do paciente"><datalist id="patientNameList"></datalist></label>
-<label>Foto do paciente<input type="file" id="pPhoto" accept="image/*" onchange="previewPatientPhoto(this)"><span class="small muted">A foto será armazenada no cadastro e aparecerá automaticamente no canto superior direito do Relatório de Avaliação / PDF.</span><div id="pPhotoPreview" class="patient-photo-preview"></div></label>
+
 <label>Identificação interna<input id="pId"></label>
 <label>Data de nascimento<input type="date" id="pBirth" onchange="calcPatientAge()"></label>
 <label>Idade<input type="text" id="pAge" readonly placeholder="Calculada automaticamente"></label>
@@ -6170,482 +6170,177 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
 
 
 
-<script id="moviment-up-foto-pdf-limpo-v18">
-(function(){
-  'use strict';
 
-  /* ============================================================
-     FOTO DO PACIENTE — BLOCO ÚNICO E ISOLADO
-     A foto fica fora do objeto principal/sincronização Supabase.
-     Isso evita aumentar o UPSERT e evita erro de armazenamento.
-     ============================================================ */
 
-  const PHOTO_PREFIX='moviment_up_patient_photo_v18_';
-  const E=id=>document.getElementById(id);
-  const getDBSafe=()=>typeof getDB==='function'?getDB():(typeof db!=='undefined'?db:null);
-  const patients=()=>((getDBSafe()&&getDBSafe().patients)||[]);
-  const patientById=pid=>patients().find(p=>String(p.id)===String(pid));
 
-  function photoKey(pid){return PHOTO_PREFIX+String(pid||'');}
 
-  function readPhoto(pid){
-    if(!pid)return '';
-    try{return localStorage.getItem(photoKey(pid))||''}catch(e){return ''}
-  }
 
-  function writePhoto(pid,data){
-    if(!pid)return false;
-    try{
-      if(data)localStorage.setItem(photoKey(pid),data);
-      else localStorage.removeItem(photoKey(pid));
-      return true;
-    }catch(e){
-      console.warn('Foto não pôde ser armazenada separadamente:',e);
-      return false;
-    }
-  }
 
-  function hydratePatientPhoto(pid){
-    const p=patientById(pid);
-    if(!p)return '';
-    const photo=p.photo||readPhoto(pid);
-    if(photo)p.photo=photo;
-    return photo||'';
-  }
+<style id="moviment-up-final-v115-training-blue">
+#nav button.nav-training.nav-active{background:linear-gradient(180deg,#2479dc,#0758b9)!important;box-shadow:inset 0 -1px #034b9e,0 1px 2px #0002!important;color:#fff!important}
+</style>
 
-  function restorePreview(p){
-    const pv=E('pPhotoPreview');
-    if(pv)pv.innerHTML=p&&p.photo
-      ?'<img src="'+p.photo+'" alt="Foto do paciente cadastrada">'
-      :'';
-  }
 
-  /* Compressão pequena e segura para armazenamento local. */
-  window.previewPatientPhoto=function(input){
-    const file=input&&input.files&&input.files[0];
-    const preview=E('pPhotoPreview');
 
-    if(!file){
-      window.__pendingPatientPhoto='';
-      if(preview)preview.innerHTML='';
-      return;
-    }
-
-    if(!file.type||!file.type.startsWith('image/')){
-      alert('Selecione uma imagem válida.');
-      input.value='';
-      return;
-    }
-
-    const reader=new FileReader();
-    reader.onload=function(){
-      const source=reader.result;
-      const img=new Image();
-
-      img.onload=function(){
-        try{
-          const max=560;
-          const ow=img.naturalWidth||img.width||1;
-          const oh=img.naturalHeight||img.height||1;
-          const scale=Math.min(1,max/Math.max(ow,oh));
-          const w=Math.max(1,Math.round(ow*scale));
-          const h=Math.max(1,Math.round(oh*scale));
-          const canvas=document.createElement('canvas');
-          canvas.width=w; canvas.height=h;
-          const ctx=canvas.getContext('2d');
-          ctx.drawImage(img,0,0,w,h);
-
-          let data=canvas.toDataURL('image/jpeg',0.62);
-
-          /* Tenta manter a foto bem pequena para não consumir a cota. */
-          if(data.length>120000)data=canvas.toDataURL('image/jpeg',0.48);
-          if(data.length>180000){
-            const c2=document.createElement('canvas');
-            const s2=0.70;
-            c2.width=Math.max(1,Math.round(w*s2));
-            c2.height=Math.max(1,Math.round(h*s2));
-            c2.getContext('2d').drawImage(canvas,0,0,c2.width,c2.height);
-            data=c2.toDataURL('image/jpeg',0.45);
-          }
-
-          window.__pendingPatientPhoto=data;
-          if(input)input.dataset.dataUrl=data;
-          if(preview)preview.innerHTML='<img src="'+data+'" alt="Pré-visualização da foto">';
-        }catch(e){
-          window.__pendingPatientPhoto=source;
-          if(preview)preview.innerHTML='<img src="'+source+'" alt="Pré-visualização da foto">';
-        }
-      };
-
-      img.onerror=function(){
-        window.__pendingPatientPhoto=source;
-        if(preview)preview.innerHTML='<img src="'+source+'" alt="Pré-visualização da foto">';
-      };
-      img.src=source;
-    };
-    reader.readAsDataURL(file);
-  };
-
-  /* Captura o paciente salvo pela função já existente, sem substituir
-     nem reimplementar o cadastro inteiro. */
-  const previousSave=window.savePatient;
-
-  if(typeof previousSave==='function'&&!window.__v18PhotoSaveWrapped){
-    window.__v18PhotoSaveWrapped=true;
-
-    window.savePatient=async function(){
-      const before=new Set(patients().map(p=>String(p.id)));
-      const editId=window.currentPatientEditId||window.__currentPatientEditId||'';
-      const pending=window.__pendingPatientPhoto||'';
-      const name=(E('pName')?.value||'').trim();
-
-      const result=previousSave.apply(this,arguments);
-      await Promise.resolve(result);
-
-      try{
-        let target=editId?patientById(editId):null;
-
-        if(!target){
-          target=patients().find(p=>!before.has(String(p.id)));
-        }
-
-        if(!target&&name){
-          const matches=patients().filter(p=>String(p.name||'').trim()===name);
-          target=matches[matches.length-1];
-        }
-
-        if(target){
-          const oldPhoto=readPhoto(target.id);
-
-          if(pending){
-            writePhoto(target.id,pending);
-            target.photo=pending;
-          }else if(oldPhoto){
-            target.photo=oldPhoto;
-          }
-
-          window.currentPatientEditId=target.id;
-          window.__currentPatientEditId=target.id;
-          restorePreview(target);
-
-          if(typeof renderPatientsEnhanced==='function')renderPatientsEnhanced();
-          else if(typeof renderPatients==='function')renderPatients();
-          if(typeof populateSelects==='function')populateSelects();
-        }
-      }catch(e){
-        console.warn('Integração de foto V18:',e);
-      }
-
-      window.__pendingPatientPhoto='';
-      const input=E('pPhoto');
-      if(input){input.value='';delete input.dataset.dataUrl;}
-
-      return result;
-    };
-  }
-
-  /* Edição: recupera a foto pelo ID, mesmo que o objeto principal não
-     contenha mais a imagem. */
-  const previousEdit=window.editPatientClinical;
-  if(typeof previousEdit==='function'&&!window.__v18PhotoEditWrapped){
-    window.__v18PhotoEditWrapped=true;
-
-    window.editPatientClinical=function(pid){
-      const result=previousEdit.apply(this,arguments);
-
-      setTimeout(function(){
-        try{
-          const p=patientById(pid);
-          if(p){
-            const photo=hydratePatientPhoto(pid);
-            if(photo)p.photo=photo;
-            window.currentPatientEditId=p.id;
-            window.__currentPatientEditId=p.id;
-            restorePreview(p);
-          }
-        }catch(e){}
-      },0);
-
-      return result;
-    };
-  }
-
-  /* Se limpar o cadastro, limpa somente a seleção/preview.
-     Não apaga a foto já cadastrada do paciente. */
-  const previousClear=window.clearPatient;
-  if(typeof previousClear==='function'&&!window.__v18PhotoClearWrapped){
-    window.__v18PhotoClearWrapped=true;
-
-    window.clearPatient=function(){
-      const result=previousClear.apply(this,arguments);
-      window.__pendingPatientPhoto='';
-      const input=E('pPhoto');
-      if(input)input.value='';
-      const pv=E('pPhotoPreview');
-      if(pv)pv.innerHTML='';
-      return result;
-    };
-  }
-
-  /* ============================================================
-     PDF DA PRESCRIÇÃO — UM ÚNICO GERADOR
-     ============================================================ */
-
-  function trainingPid(){
-    return (E('tPatient')?.value||window.currentTrainingPatientId||'');
-  }
-
-  function escHtml(v){
-    return String(v==null||v===''?'—':v).replace(/[&<>"']/g,function(m){
-      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
-    });
-  }
-
-  function formatAnyDate(v){
-    try{
-      return typeof formatDate==='function'?formatDate(v):String(v||'—');
-    }catch(e){return String(v||'—')}
-  }
-
-  function trainingPlan(pid){
-    try{
-      return typeof getTrainingPlan==='function'
-        ?getTrainingPlan(pid)
-        :(getDBSafe()?.trainingPlans||[]).find(x=>String(x.patientId)===String(pid));
-    }catch(e){return null}
-  }
-
-  function strengthHTML(p,plan){
-    let h='';
-    h+='<div class="patient-grid">';
-    h+='<div><b>Paciente</b><span>'+escHtml(p.name)+'</span></div>';
-    h+='<div><b>Unidade</b><span>'+escHtml(p.unit||p.unidade)+'</span></div>';
-    h+='<div><b>Sexo</b><span>'+escHtml(p.sex)+'</span></div>';
-    h+='<div><b>Data da prescrição</b><span>'+escHtml(plan?.date?formatAnyDate(plan.date):'—')+'</span></div>';
-    h+='</div>';
-
-    h+='<div class="field"><b>Professor responsável</b><span>'+escHtml(plan?.professor)+'</span></div>';
-
-    if(plan?.objectives?.length){
-      h+='<h2>Objetivos</h2><div class="field"><span>'+plan.objectives.map(escHtml).join(' • ')+'</span></div>';
-    }
-
-    ['A','B','C','D','E'].forEach(function(div){
-      const arr=plan?.strength?.[div]||[];
-      h+='<h2>TREINO '+div+'</h2>';
-
-      if(!arr.length){
-        h+='<div class="field"><span>Nenhum exercício prescrito.</span></div>';
-        return;
-      }
-
-      arr.forEach(function(ex,i){
-        const reg=ex.reg||{};
-        h+='<div class="exercise">';
-        h+='<div class="exercise-head"><b>'+(i+1)+'. '+escHtml(ex.name)+'</b>';
-        h+='<span>Reg.: '+escHtml([reg.A,reg.F,reg.D,reg.E,reg.B].filter(Boolean).join(' / '))+'</span></div>';
-        h+='<div class="exercise-grid">';
-        h+='<div><b>Carga</b><span>'+escHtml(ex.load)+'</span></div>';
-        h+='<div><b>Séries</b><span>'+escHtml(ex.sets)+'</span></div>';
-        h+='<div><b>Repetições</b><span>'+escHtml(ex.reps)+'</span></div>';
-        h+='<div><b>Intervalo</b><span>'+escHtml(ex.interval)+'</span></div>';
-        h+='<div><b>Observação</b><span>'+escHtml(ex.obs)+'</span></div>';
-        h+='</div></div>';
-      });
-    });
-
-    return h;
-  }
-
-  function aerobicHTML(p,plan){
-    const a=plan?.aerobic||{};
-    let h='<div class="patient-grid">';
-    h+='<div><b>Paciente</b><span>'+escHtml(p.name)+'</span></div>';
-    h+='<div><b>Unidade</b><span>'+escHtml(p.unit||p.unidade)+'</span></div>';
-    h+='<div><b>Sexo</b><span>'+escHtml(p.sex)+'</span></div>';
-    h+='<div><b>Data da prescrição</b><span>'+escHtml(plan?.date?formatAnyDate(plan.date):'—')+'</span></div></div>';
-    h+='<div class="field"><b>Professor responsável</b><span>'+escHtml(plan?.professor)+'</span></div>';
-    h+='<h2>Prescrição aeróbica</h2><div class="aero-grid">';
-
-    [
-      ['Modalidade',a.modality],
-      ['Frequência semanal',a.frequency!=null?a.frequency+' vezes/semana':null],
-      ['Duração',a.duration!=null?a.duration+' min':null],
-      ['Intensidade',a.intensity],
-      ['Objetivo',a.objective],
-      ['FCmáx estimada',a.fcMax],
-      ['FC repouso',a.fcRest],
-      ['FC reserva',a.fcReserve],
-      ['FC-alvo',a.fcTarget],
-      ['Velocidade',a.speed!=null?a.speed+' km/h':null],
-      ['Distância',a.distance!=null?a.distance+' km':null],
-      ['Nível',a.level]
-    ].forEach(function(x){
-      h+='<div class="field"><b>'+escHtml(x[0])+'</b><span>'+escHtml(x[1])+'</span></div>';
-    });
-
-    h+='</div>';
-    if((a.functionalParts||[]).length)
-      h+='<div class="field"><b>Treino funcional</b><span>'+a.functionalParts.map(escHtml).join(' • ')+'</span></div>';
-    if(a.obs)
-      h+='<div class="field"><b>Observações</b><span>'+escHtml(a.obs).replace(/\n/g,'<br>')+'</span></div>';
-
-    return h;
-  }
-
-  function openTrainingPDF(title,body,p){
-    const photo=readPhoto(p.id)||p.photo||'';
-    const w=window.open('','_blank','width=1000,height=800');
-
-    if(!w){
-      alert('O navegador bloqueou a janela do PDF. Permita pop-ups para esta plataforma.');
-      return;
-    }
-
-    const photoHTML=photo
-      ?'<img id="patientPhoto" class="patient-photo" src="'+photo+'" alt="Foto do paciente">'
-      :'<div class="patient-photo empty-photo">Sem foto</div>';
-
-    w.document.open();
-    w.document.write(
-      '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">'+
-      '<title>'+escHtml(title)+'</title>'+
-      '<style>'+
-      '@page{size:A4;margin:12mm}'+
-      'body{font-family:Arial,Helvetica,sans-serif;color:#17324d;margin:0;background:#fff;font-size:11px}'+
-      '.toolbar{margin-bottom:12px}.toolbar button{padding:8px 14px;font-weight:700;border:0;border-radius:6px;background:#075fc7;color:#fff;cursor:pointer}'+
-      '.head{display:flex;align-items:center;gap:15px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}'+
-      '.patient-photo{width:92px;height:92px;object-fit:cover;border-radius:10px;border:2px solid #e05288;flex:0 0 auto;background:#f4f8fb}'+
-      '.empty-photo{display:flex;align-items:center;justify-content:center;color:#71818a;font-size:10px}'+
-      '.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.title p{margin:0;color:#657780;font-size:10px}'+
-      '.patient-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:7px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px;margin-bottom:9px}'+
-      '.patient-grid b,.field b,.exercise-grid b{display:block;font-size:8px;color:#66777e;text-transform:uppercase;margin-bottom:3px}'+
-      '.patient-grid span,.field span,.exercise-grid span{font-weight:700}'+
-      '.field{border:1px solid #dce5ea;border-radius:6px;padding:7px;margin:7px 0}'+
-      'h2{font-size:14px;color:#0753aa;margin:13px 0 7px;border-bottom:1px solid #dbe5eb;padding-bottom:4px}'+
-      '.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}'+
-      '.exercise-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;margin-bottom:6px}'+
-      '.exercise-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.exercise-grid>div{background:#f7fafb;border-radius:5px;padding:5px;min-height:28px}'+
-      '.aero-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}'+
-      '.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}'+
-      '@media print{.toolbar{display:none}.exercise{break-inside:avoid}}'+
-      '</style></head><body>'+
-      '<div class="toolbar"><button onclick="window.print()">Imprimir / Salvar como PDF</button> <button onclick="window.close()">Fechar</button></div>'+
-      '<div class="head">'+photoHTML+
-      '<div class="title"><h1>'+escHtml(title)+'</h1><p>Moviment’ Up — Treinamento Inclusivo Adaptado · Casa de David</p></div></div>'+
-      body+
-      '<div class="footer">Moviment’ Up — Treinamento Inclusivo | Casa de David</div>'+
-      '</body></html>'
-    );
-    w.document.close();
-
-    const img=w.document.getElementById('patientPhoto');
-    const printNow=function(){
-      try{w.focus();w.print()}catch(e){}
-    };
-
-    if(img){
-      if(img.complete&&img.naturalWidth>0)setTimeout(printNow,120);
-      else{
-        img.onload=function(){setTimeout(printNow,80)};
-        img.onerror=function(){setTimeout(printNow,120)};
-      }
-    }else{
-      setTimeout(printNow,120);
-    }
-  }
-
-  function printStrength(){
-    const pid=trainingPid();
-    const p=patientById(pid);
-
-    if(!p){
-      alert('Selecione um paciente antes de gerar a ficha.');
-      return;
-    }
-
-    const photo=hydratePatientPhoto(pid);
-    const plan=trainingPlan(pid);
-
-    if(!plan){
-      alert('Não existe prescrição de treino registrada para este paciente.');
-      return;
-    }
-
-    openTrainingPDF('FICHA DE TREINAMENTO RESISTIDO',strengthHTML(p,plan),p);
-  }
-
-  function printAerobic(){
-    const pid=trainingPid();
-    const p=patientById(pid);
-
-    if(!p){
-      alert('Selecione um paciente antes de gerar a ficha.');
-      return;
-    }
-
-    const plan=trainingPlan(pid);
-    if(!plan){
-      alert('Não existe prescrição de treino registrada para este paciente.');
-      return;
-    }
-
-    openTrainingPDF('FICHA DE TREINAMENTO AERÓBICO',aerobicHTML(p,plan),p);
-  }
-
-  function printComplete(){
-    const pid=trainingPid();
-    const p=patientById(pid);
-
-    if(!p){
-      alert('Selecione um paciente antes de gerar a ficha.');
-      return;
-    }
-
-    const plan=trainingPlan(pid);
-    if(!plan){
-      alert('Não existe prescrição de treino registrada para este paciente.');
-      return;
-    }
-
-    openTrainingPDF(
-      'FICHA COMPLETA DE TREINO',
-      strengthHTML(p,plan)+aerobicHTML(p,plan),
-      p
-    );
-  }
-
-  /* Substituição única dos três botões de impressão. */
-  window.printStrengthTrainingSheet=printStrength;
-  window.printAerobicTrainingSheet=printAerobic;
-  window.printCompleteTrainingSheet=printComplete;
-
-  /* Reidrata fotos já existentes no armazenamento local quando a página abre. */
-  function hydrateAll(){
-    try{
-      patients().forEach(function(p){
-        if(p&&p.id&&!p.photo){
-          const photo=readPhoto(p.id);
-          if(photo)p.photo=photo;
-        }
-      });
-      if(typeof populateSelects==='function')populateSelects();
-    }catch(e){}
-  }
-
-  if(document.readyState==='loading')
-    document.addEventListener('DOMContentLoaded',function(){setTimeout(hydrateAll,80)});
-  else
-    setTimeout(hydrateAll,80);
-
-})();
-</script>
-<style id="moviment-up-v18-prescricao-blue">
+<style id="moviment-up-v19-cadastro-fixes">
+/* Prescrição de Exercício: azul quando estiver ativa. */
 #nav button[onclick="show('training')"].nav-active{
   background:linear-gradient(180deg,#2479dc,#0758b9)!important;
   color:#fff!important;
-  box-shadow:inset 0 -1px #034b9e,0 1px 2px #0002!important;
+  box-shadow:0 4px 12px rgba(7,88,185,.25)!important;
 }
 </style>
+<script id="moviment-up-v19-cadastro-fixes">
+(function(){
+  'use strict';
+  const $=id=>document.getElementById(id);
+
+  /* ============================================================
+     1) CADASTRO — FOTO REMOVIDA DEFINITIVAMENTE DA INTERFACE
+     ============================================================ */
+  const photo=$('pPhoto');
+  if(photo){
+    const lab=photo.closest('label');
+    if(lab)lab.remove(); else photo.remove();
+  }
+  const photoPreview=$('pPhotoPreview');
+  if(photoPreview)photoPreview.remove();
+
+  /* ============================================================
+     2) IDADE — cálculo automático, sem depender de variável global
+     ============================================================ */
+  window.calcPatientAge=function(){
+    const birthEl=$('pBirth'), ageEl=$('pAge');
+    if(!birthEl||!ageEl)return '';
+    const raw=String(birthEl.value||'').trim();
+    if(!raw){ ageEl.value=''; return ''; }
+    const parts=raw.split('-').map(Number);
+    if(parts.length!==3||!parts.every(Number.isFinite)){ageEl.value='';return '';}
+    const [y,m,d]=parts;
+    const birth=new Date(y,m-1,d);
+    const today=new Date();
+    let age=today.getFullYear()-y;
+    const birthdayPassed=(today.getMonth()+1>m)||((today.getMonth()+1===m)&&today.getDate()>=d);
+    if(!birthdayPassed)age--;
+    if(age<0||birth.getFullYear()!==y||birth.getMonth()!==m-1||birth.getDate()!==d){ageEl.value='';return '';}
+    ageEl.value=age+' anos';
+    return age;
+  };
+  function wireAge(){
+    const b=$('pBirth');
+    if(!b||b.dataset.v19AgeWired==='1')return;
+    b.dataset.v19AgeWired='1';
+    b.addEventListener('input',window.calcPatientAge);
+    b.addEventListener('change',window.calcPatientAge);
+    window.calcPatientAge();
+  }
+  wireAge();
+
+  /* ============================================================
+     3) APAGAR CADASTRO — ligar o botão data-delete-patient.
+        A função deletePatient já existente continua responsável
+        pela exclusão e sincronização; aqui apenas garantimos o clique.
+     ============================================================ */
+  function wireDeleteButtons(){
+    const table=$('patientTable');
+    if(!table||table.dataset.v19DeleteWired==='1')return;
+    table.dataset.v19DeleteWired='1';
+    table.addEventListener('click',function(ev){
+      const btn=ev.target.closest('[data-delete-patient]');
+      if(!btn)return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const pid=btn.getAttribute('data-delete-patient');
+      if(pid && typeof window.deletePatient==='function'){
+        window.deletePatient(pid);
+      }else{
+        alert('Não foi possível localizar a função de exclusão do cadastro.');
+      }
+    });
+  }
+  wireDeleteButtons();
+
+  /* renderPatients recria a tabela; religar por delegação mantém o
+     funcionamento após salvar/editar/excluir. */
+  const oldRenderPatients=window.renderPatients;
+  if(typeof oldRenderPatients==='function'&&!window.__v19RenderPatientsWrapped){
+    window.__v19RenderPatientsWrapped=true;
+    window.renderPatients=function(){
+      const r=oldRenderPatients.apply(this,arguments);
+      wireDeleteButtons();
+      wireAge();
+      return r;
+    };
+  }
+
+  /* ============================================================
+     4) CADASTRO — após editar, recalcular idade pela data real.
+     ============================================================ */
+  const oldEdit=window.editPatientClinical;
+  if(typeof oldEdit==='function'&&!window.__v19EditWrapped){
+    window.__v19EditWrapped=true;
+    window.editPatientClinical=function(pid){
+      const r=oldEdit.apply(this,arguments);
+      window.calcPatientAge();
+      return r;
+    };
+  }
+
+  /* ============================================================
+     5) LIMPAR CADASTRO — garantir idade e campos limpos.
+     ============================================================ */
+  const oldClear=window.clearPatient;
+  if(typeof oldClear==='function'&&!window.__v19ClearWrapped){
+    window.__v19ClearWrapped=true;
+    window.clearPatient=function(){
+      const r=oldClear.apply(this,arguments);
+      const b=$('pBirth'),a=$('pAge');
+      if(b)b.value='';
+      if(a)a.value='';
+      const f=$('pPhoto'); if(f)f.value='';
+      const pv=$('pPhotoPreview'); if(pv)pv.innerHTML='';
+      return r;
+    };
+  }
+
+  /* ============================================================
+     6) SALVAMENTO — não altera a lógica existente. Apenas garante
+        que a idade exibida esteja atualizada ANTES do salvar.
+     ============================================================ */
+  const saveBtn=document.querySelector('#patients button[onclick*="savePatient"]');
+  if(saveBtn&&!saveBtn.dataset.v19AgeClick){
+    saveBtn.dataset.v19AgeClick='1';
+    saveBtn.addEventListener('click',function(){window.calcPatientAge();},true);
+  }
+
+  /* ============================================================
+     7) AUDITORIA ESTÁTICA DOS BOTÕES INLINE.
+        Não substitui funções nem muda o comportamento; registra
+        apenas chamadas realmente ausentes para facilitar diagnóstico.
+     ============================================================ */
+  function auditButtons(){
+    const missing=[];
+    document.querySelectorAll('[onclick]').forEach(el=>{
+      const code=el.getAttribute('onclick')||'';
+      const re=/\b([A-Za-z_$][\w$]*)\s*\(/g; let m;
+      while((m=re.exec(code))){
+        const name=m[1];
+        if(['if','confirm','alert','print','close','closest','getElementById'].includes(name))continue;
+        if(typeof window[name]!=='function' && !missing.includes(name))missing.push(name);
+      }
+    });
+    if(missing.length)console.warn('Moviment Up V19 — funções de botão não encontradas:',missing);
+    else console.info('Moviment Up V19 — auditoria de botões: OK');
+    return missing;
+  }
+
+  /* Aguarda o DOM completo porque algumas abas são renderizadas depois. */
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',function(){wireAge();wireDeleteButtons();auditButtons();});
+  }else{
+    setTimeout(function(){wireAge();wireDeleteButtons();auditButtons();},0);
+  }
+})();
+</script>
 </body>
 </html>
