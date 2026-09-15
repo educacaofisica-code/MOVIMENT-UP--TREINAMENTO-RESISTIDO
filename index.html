@@ -6209,3 +6209,67 @@ window.printCompleteTrainingSheet=()=>printTraining('Ficha Completa de Treino','
 </script>
 </body>
 </html>
+
+<style id="v15-photo-pdf-robust">#movimentUpPhotoPdfPreview{position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;overflow:hidden}</style>
+<script id="v15-photo-pdf-robust-script">
+(function(){
+'use strict';
+function patientByTraining(){
+ const pid=String(document.getElementById('tPatient')?.value||'');
+ return (window.db?.patients||[]).find(p=>String(p.id)===pid)||null;
+}
+function dataUrlToBlobUrl(data){
+ try{
+  if(!data||typeof data!=='string')return '';
+  if(data.startsWith('blob:')||data.startsWith('http:')||data.startsWith('https:'))return data;
+  const m=data.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);if(!m)return '';
+  const mime=m[1]||'image/jpeg',b64=!!m[2],raw=b64?atob(m[3]):decodeURIComponent(m[3]);
+  const bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes],{type:mime}));
+ }catch(e){return ''}
+}
+function getPhotoIDB(pid){
+ return new Promise(resolve=>{
+  try{
+   const r=indexedDB.open('moviment_up_patient_photos_v1',1);
+   r.onerror=()=>resolve('');
+   r.onsuccess=()=>{const d=r.result;
+    if(!d.objectStoreNames.contains('photos')){d.close();resolve('');return}
+    const q=d.transaction('photos','readonly').objectStore('photos').get(String(pid));
+    q.onsuccess=()=>{const v=q.result?.photo||'';d.close();resolve(v)};
+    q.onerror=()=>{d.close();resolve('')};
+   };
+  }catch(e){resolve('')}
+ })
+}
+async function robustTrainingPhotoPrint(title,kind){
+ const p=patientByTraining();
+ if(!p){alert('Selecione um paciente antes de gerar a ficha de treino.');return}
+ const plan=typeof currentPlan==='function'?currentPlan(p.id):null;
+ if(!plan){alert('Este paciente ainda não possui uma prescrição salva. Salve a prescrição antes de gerar a ficha.');return}
+ let photo=p.photo||'';
+ if(!photo)photo=await getPhotoIDB(p.id);
+ if(!photo){alert('Este paciente não possui uma foto cadastrada. Salve a foto no Cadastro antes de gerar o PDF.');return}
+ const blobUrl=dataUrlToBlobUrl(photo)||photo;
+ const v=typeof escV==='function'?escV:(x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+ const logo=document.querySelector('.brand-logo')?.src||'';
+ let body='<h2>Paciente</h2><div class="patient"><div><b>Paciente</b><span>'+v(p.name)+'</span></div><div><b>Unidade</b><span>'+v(p.unit)+'</span></div><div><b>Idade</b><span>'+v(p.age)+'</span></div></div>';
+ if(kind!=='aerobic'){
+  body+='<h2>Treinamento Resistido</h2>';['A','B','C','D','E'].forEach(w=>{const a=plan.strength?.[w]||[];if(!a.length)return;body+='<h3>Treino '+w+'</h3>';a.forEach(x=>body+='<div class="exercise"><b>'+v(x.name||'Exercício')+'</b><div>'+v(x.load)+' kg · '+v(x.sets)+' séries · '+v(x.reps)+' repetições · intervalo '+v(x.interval)+'</div>'+(x.obs?'<div class="obs">'+v(x.obs)+'</div>':'')+'</div>')})
+ }
+ if(kind!=='strength'){
+  const a=plan.aerobic||{};body+='<h2>Treinamento Aeróbico</h2><div class="grid">'+[['Modalidade',a.modality],['Frequência',a.frequency],['Duração',a.duration],['Intensidade',a.intensity],['Objetivo',a.objective],['FC-alvo',a.fcTarget]].map(x=>'<div><b>'+v(x[0])+'</b><span>'+v(x[1])+'</span></div>').join('')+'</div>';
+ }
+ const w=window.open('','_blank','width=1000,height=800');
+ if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para a plataforma.');return}
+ const html='<!doctype html><html><head><meta charset="utf-8"><title>'+v(title)+'</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;font-size:11px}.no-print{margin-bottom:12px}.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}.logo{width:145px;height:58px;object-fit:contain}.patient-photo{display:block;width:100px;height:100px;object-fit:cover;border:1px solid #cfd6da;border-radius:8px;margin-left:auto;flex:0 0 auto}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.patient{display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px}.patient b,.grid b{display:block;font-size:8px;color:#66777e;text-transform:uppercase}.patient span,.grid span{font-weight:700}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.grid>div{border:1px solid #dce5ea;border-radius:6px;padding:7px}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.obs{font-size:9px;color:#4e626b;margin-top:4px}h2{font-size:14px;color:#0753aa;border-bottom:1px solid #dbe5eb;padding-bottom:4px}h3{font-size:12px;color:#0753aa}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}@media print{.no-print{display:none}}</style></head><body><div class="no-print"><button onclick="window.print()">Imprimir / Salvar como PDF</button> <button onclick="window.close()">Fechar</button></div><div class="head">'+(logo?'<img class="logo" src="'+String(logo).replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'">':'')+'<img id="patientPhoto" class="patient-photo" src="'+String(blobUrl).replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'" alt="Foto do paciente"><div class="title"><h1>Moviment’ Up — Prescrição de Exercício</h1><div>Casa de David — Treinamento Inclusivo</div></div></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David.</div></body></html>';
+ w.document.open();w.document.write(html);w.document.close();
+ const im=w.document.getElementById('patientPhoto');
+ const doPrint=()=>{try{w.focus();w.print()}finally{if(blobUrl.startsWith('blob:'))setTimeout(()=>URL.revokeObjectURL(blobUrl),10000)}};
+ if(im){if(im.complete&&im.naturalWidth>0)setTimeout(doPrint,250);else{im.onload=()=>setTimeout(doPrint,250);im.onerror=()=>{alert('A foto foi encontrada, mas o navegador não conseguiu carregá-la na ficha.');if(blobUrl.startsWith('blob:'))URL.revokeObjectURL(blobUrl)};setTimeout(()=>{if(im.complete&&im.naturalWidth>0)doPrint()},5000)}}else doPrint();
+}
+window.printStrengthTrainingSheet=()=>robustTrainingPhotoPrint('Ficha do Treinamento Resistido','strength');
+window.printAerobicTrainingSheet=()=>robustTrainingPhotoPrint('Ficha do Treinamento Aeróbico','aerobic');
+window.printCompleteTrainingSheet=()=>robustTrainingPhotoPrint('Ficha Completa de Treino','complete');
+})();
+</script>
