@@ -5359,18 +5359,12 @@ setTimeout(render,200);setTimeout(render,800);
 
   /* O salvamento local continua funcionando sem internet. Depois de salvar,
      tenta sincronizar automaticamente quando houver conexão. */
-  /* Um único disparo agendado por persist(). Evita que vários persist() seguidos
-     (inclusive os usados pela foto) façam o indicador voltar para SINCRONIZANDO. */
   const originalPersist=window.persist;
   if(typeof originalPersist==='function'&&!window.__movimentUpPersistV10){
     window.__movimentUpPersistV10=true;
-    let syncTimer=null;
     window.persist=function(){
       const result=originalPersist.apply(this,arguments);
-      if(result!==false&&navigator.onLine){
-        clearTimeout(syncTimer);
-        syncTimer=setTimeout(()=>{syncTimer=null;syncNow('alteração salva localmente')},700);
-      }
+      if(result!==false&&navigator.onLine)setTimeout(()=>syncNow('alteração salva localmente'),300);
       return result;
     };
   }
@@ -6117,433 +6111,541 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
 })();
 </script>
 
-
-<style id="v18-foto-pdf-clean">
-#nav button[onclick="show('training')"].nav-active{background:linear-gradient(180deg,#2479dc,#0758b9)!important;color:#fff!important;box-shadow:inset 0 -1px #034b9e,0 1px 2px #0002!important}
-.patient-photo{display:block!important;width:100px!important;height:100px!important;object-fit:cover!important;border:1px solid #cfd6da!important;border-radius:8px!important;margin-left:auto!important}
-</style>
-<script id="v18-foto-pdf-clean-script">
+<script id="training-sheet-print-v10-4">
 (function(){
-'use strict';
-const PHOTO_DB='moviment_up_patient_photos_v18';
-const PHOTO_STORE='photos';
-function openPhotoDB(){return new Promise((resolve,reject)=>{if(!window.indexedDB)return reject(new Error('IndexedDB indisponível'));const r=indexedDB.open(PHOTO_DB,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(PHOTO_STORE))r.result.createObjectStore(PHOTO_STORE,{keyPath:'patientId'});};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error('Falha ao abrir banco de fotos'));});}
-function savePhoto(pid,photo){return openPhotoDB().then(d=>new Promise((resolve,reject)=>{const t=d.transaction(PHOTO_STORE,'readwrite');t.objectStore(PHOTO_STORE).put({patientId:String(pid),photo,updatedAt:Date.now()});t.oncomplete=()=>{d.close();resolve(true)};t.onerror=()=>{const e=t.error;d.close();reject(e||new Error('Falha ao salvar foto'))};}));}
-function loadPhoto(pid){return openPhotoDB().then(d=>new Promise((resolve,reject)=>{const t=d.transaction(PHOTO_STORE,'readonly');const q=t.objectStore(PHOTO_STORE).get(String(pid));q.onsuccess=()=>{const v=q.result?.photo||'';d.close();resolve(v)};q.onerror=()=>{const e=q.error;d.close();reject(e||new Error('Falha ao ler foto'))};})).catch(()=> '');}
-function compressPhoto(file){return new Promise((resolve,reject)=>{if(!file)return resolve('');const r=new FileReader();r.onerror=()=>reject(new Error('Falha ao ler a foto'));r.onload=()=>{const im=new Image();im.onerror=()=>reject(new Error('Falha ao processar a foto'));im.onload=()=>{const max=700,scale=Math.min(1,max/Math.max(im.naturalWidth||im.width,im.naturalHeight||im.height));const w=Math.max(1,Math.round((im.naturalWidth||im.width)*scale)),h=Math.max(1,Math.round((im.naturalHeight||im.height)*scale));const c=document.createElement('canvas');c.width=w;c.height=h;const ctx=c.getContext('2d');ctx.drawImage(im,0,0,w,h);resolve(c.toDataURL('image/jpeg',.72));};im.src=r.result;};r.readAsDataURL(file);});}
-function esc18(v){return String(v==null||v===''?'—':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-window.previewPatientPhoto=async function(input){const box=document.getElementById('pPhotoPreview');const file=input?.files?.[0];if(!box)return;if(!file){box.innerHTML='';window.__pendingPatientPhoto='';return;}try{const photo=await compressPhoto(file);window.__pendingPatientPhoto=photo;box.innerHTML='<img src="'+photo+'" alt="Foto do paciente"><div class="small muted">Foto pronta para salvar.</div>';}catch(e){window.__pendingPatientPhoto='';box.innerHTML='<div class="notice danger">Não foi possível carregar a foto.</div>';}};
-async function hydratePhotos(){try{const ps=db.patients||[];await Promise.all(ps.map(async p=>{if(!p.photo){const ph=await loadPhoto(p.id);if(ph)p.photo=ph;}}));if(typeof populateSelects==='function')populateSelects();if(typeof renderPatients==='function')renderPatients();}catch(e){}}
-window.__savePatientPhotosToIDB=async function(){const ps=(db.patients||[]).filter(p=>p&&p.id&&p.photo);await Promise.all(ps.map(p=>savePhoto(p.id,p.photo).catch(()=>{})));};
-window.__loadPatientPhotosFromIDB=hydratePhotos;
+  function sheetPatient(){
+    if(!currentTrainingPatientId){alert('Selecione um paciente antes de gerar a ficha de treino.');return null;}
+    const p=(db.patients||[]).find(x=>x.id===currentTrainingPatientId)||{};
+    const plan=currentTrainingPlan||getTrainingPlan(currentTrainingPatientId);
+    if(!plan){alert('Este paciente ainda não possui uma prescrição salva. Salve a prescrição antes de gerar a ficha.');return null;}
+    return {p,plan};
+  }
+  function safe(v){return esc(v==null||v===''?'—':String(v));}
+  function openSheet(title,body){
+    const w=window.open('','_blank','width=1000,height=800');
+    if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para esta plataforma.');return;}
+    w.document.open();
+    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+safe(title)+'</title><style>'+`
+      @page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;background:#fff;font-size:11px}
+      .head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}
+      .logo{max-width:145px;max-height:58px;object-fit:contain}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.title p{margin:0;font-size:10px;color:#566873}
+      .patient{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:7px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px;margin-bottom:12px}.patient b{display:block;font-size:9px;color:#66777e;text-transform:uppercase}.patient span{font-weight:700;font-size:11px}
+      h2{font-size:14px;color:#0753aa;margin:13px 0 7px;border-bottom:1px solid #dbe5eb;padding-bottom:4px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:8px}.field{border:1px solid #dce5ea;border-radius:6px;padding:7px;min-height:27px}.field b{display:block;font-size:8px;color:#687a83;text-transform:uppercase;margin-bottom:3px}.field span{font-weight:700}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.exercise-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;margin-bottom:6px}.exercise-data{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.mini{background:#f7fafb;border-radius:5px;padding:5px}.mini b{display:block;font-size:8px;color:#687a83}.mini span{font-weight:700}.obs{margin-top:5px;font-size:9px;color:#4e626b}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}.no-print{margin-bottom:12px}@media print{.no-print{display:none}.exercise{break-inside:avoid}}
+    `+'</style></head><body><div class="no-print"><button onclick="window.print()" style="padding:8px 14px;font-weight:700">Imprimir / Salvar como PDF</button><button onclick="window.close()" style="padding:8px 14px;margin-left:6px">Fechar</button></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David. Ficha gerada a partir da prescrição registrada no sistema.</div></body></html>');
+    w.document.close();w.focus();
+  }
+  function header(title,p,plan){
+    const prof=plan.professor||'—', date=plan.date?formatDate(plan.date):'—';
+    return '<div class="head"><div class="title"><h1>'+safe(title)+'</h1><p>Moviment’ Up — Casa de David</p></div></div><div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(date)+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(prof)+'</span></div>';
+  }
+  function strengthBody(p,plan,onlyDay){
+    let days=onlyDay?[onlyDay]:['A','B','C','D','E'];
+    let h=header(onlyDay?'FICHA DE TREINO — TREINO '+onlyDay:'FICHA DE TREINAMENTO RESISTIDO',p,plan);
+    if(plan.objectives?.length) h+='<h2>Objetivos</h2><div class="field"><span>'+plan.objectives.map(safe).join(' • ')+'</span></div>';
+    days.forEach(d=>{
+      const arr=plan.strength?.[d]||[];
+      h+='<h2>TREINO '+d+'</h2>';
+      if(!arr.length){h+='<div class="field"><span>Nenhum exercício prescrito.</span></div>';return;}
+      arr.forEach((ex,i)=>{
+        h+='<div class="exercise"><div class="exercise-head"><b>'+((i+1)+'. '+safe(ex.name))+'</b><span>Regulagem: '+safe(ex.reg?.A)+' / '+safe(ex.reg?.F)+' / '+safe(ex.reg?.D)+' / '+safe(ex.reg?.E)+' / '+safe(ex.reg?.B)+'</span></div><div class="exercise-data"><div class="mini"><b>Carga (kg)</b><span>'+safe(ex.load)+'</span></div><div class="mini"><b>Séries</b><span>'+safe(ex.sets)+'</span></div><div class="mini"><b>Repetições</b><span>'+safe(ex.reps)+'</span></div><div class="mini"><b>Intervalo (s)</b><span>'+safe(ex.interval)+'</span></div><div class="mini"><b>Observação</b><span>'+safe(ex.obs)+'</span></div></div></div>';
+      });
+    });
+    return h;
+  }
+  function aerobicBody(p,plan){
+    const a=plan.aerobic||{};
+    let h=header('FICHA DE TREINAMENTO AERÓBICO',p,plan);
+    h+='<h2>Prescrição</h2><div class="grid">'+[
+      ['Modalidade',a.modality],['Frequência semanal',a.frequency!=null?a.frequency+' vezes/semana':null],['Duração',a.duration!=null?a.duration+' min':null],['Intensidade',a.intensity],['Objetivo',a.objective],['FCmáx estimada',a.fcMax],['FC repouso',a.fcRest],['FC reserva',a.fcReserve],['FC-alvo',a.fcTarget],['Velocidade',a.speed!=null?a.speed+' km/h':null],['Distância',a.distance!=null?a.distance+' km':null],['Carga / resistência',a.resistance],['Nível',a.level]
+    ].map(x=>'<div class="field"><b>'+safe(x[0])+'</b><span>'+safe(x[1])+'</span></div>').join('')+'</div>';
+    if((a.functionalParts||[]).length)h+='<div class="field"><b>Treino funcional</b><span>'+a.functionalParts.map(safe).join(' • ')+'</span></div>';
+    if(a.obs)h+='<div class="field" style="margin-top:8px"><b>Observações</b><span>'+safe(a.obs).replace(/\n/g,'<br>')+'</span></div>';
+    return h;
+  }
+  window.printStrengthTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha de Treinamento Resistido',strengthBody(x.p,x.plan));};
+  window.printAerobicTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha de Treinamento Aeróbico',aerobicBody(x.p,x.plan));};
+  window.printCompleteTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha Completa de Treino',strengthBody(x.p,x.plan)+aerobicBody(x.p,x.plan));};
+})();
+</script>
 
-// ÚNICO ponto de integração da foto com o salvamento do paciente.
-const previousSave=window.savePatient;
-if(typeof previousSave==='function'){
-  window.savePatient=async function(){
-    const before=new Set((db.patients||[]).map(p=>String(p.id)));
-    let photo=window.__pendingPatientPhoto||'';
-    const file=document.getElementById('pPhoto')?.files?.[0];
-    if(file&&!photo){try{photo=await compressPhoto(file)}catch(e){alert('Não foi possível carregar a foto do paciente.');return;}}
-    const result=await Promise.resolve(previousSave.apply(this,arguments));
-    const arr=db.patients||[];
-    let patient=arr.find(p=>!before.has(String(p.id)))||null;
-    if(!patient){
-      const name=(document.getElementById('pName')?.value||'').trim().toLowerCase();
-      const iid=(document.getElementById('pId')?.value||'').trim().toLowerCase();
-      patient=arr.slice().reverse().find(p=>(iid&&String(p.internalId||'').trim().toLowerCase()===iid)||(name&&String(p.name||'').trim().toLowerCase()===name))||null;
+
+
+<script id="moviment-up-foto-pdf-limpo-v18">
+(function(){
+  'use strict';
+
+  /* ============================================================
+     FOTO DO PACIENTE — BLOCO ÚNICO E ISOLADO
+     A foto fica fora do objeto principal/sincronização Supabase.
+     Isso evita aumentar o UPSERT e evita erro de armazenamento.
+     ============================================================ */
+
+  const PHOTO_PREFIX='moviment_up_patient_photo_v18_';
+  const E=id=>document.getElementById(id);
+  const getDBSafe=()=>typeof getDB==='function'?getDB():(typeof db!=='undefined'?db:null);
+  const patients=()=>((getDBSafe()&&getDBSafe().patients)||[]);
+  const patientById=pid=>patients().find(p=>String(p.id)===String(pid));
+
+  function photoKey(pid){return PHOTO_PREFIX+String(pid||'');}
+
+  function readPhoto(pid){
+    if(!pid)return '';
+    try{return localStorage.getItem(photoKey(pid))||''}catch(e){return ''}
+  }
+
+  function writePhoto(pid,data){
+    if(!pid)return false;
+    try{
+      if(data)localStorage.setItem(photoKey(pid),data);
+      else localStorage.removeItem(photoKey(pid));
+      return true;
+    }catch(e){
+      console.warn('Foto não pôde ser armazenada separadamente:',e);
+      return false;
     }
-    if(patient&&photo){
-      patient.photo=photo;
-      try{await savePhoto(patient.id,photo);}catch(e){console.warn('Foto não foi gravada no armazenamento de fotos',e);}
-      const box=document.getElementById('pPhotoPreview');if(box)box.innerHTML='<img src="'+photo+'" alt="Foto do paciente"><div class="small muted">Foto cadastrada.</div>';
+  }
+
+  function hydratePatientPhoto(pid){
+    const p=patientById(pid);
+    if(!p)return '';
+    const photo=p.photo||readPhoto(pid);
+    if(photo)p.photo=photo;
+    return photo||'';
+  }
+
+  function restorePreview(p){
+    const pv=E('pPhotoPreview');
+    if(pv)pv.innerHTML=p&&p.photo
+      ?'<img src="'+p.photo+'" alt="Foto do paciente cadastrada">'
+      :'';
+  }
+
+  /* Compressão pequena e segura para armazenamento local. */
+  window.previewPatientPhoto=function(input){
+    const file=input&&input.files&&input.files[0];
+    const preview=E('pPhotoPreview');
+
+    if(!file){
+      window.__pendingPatientPhoto='';
+      if(preview)preview.innerHTML='';
+      return;
     }
-    window.__pendingPatientPhoto='';
-    try{if(typeof persist==='function')persist();}catch(e){}
-    return result;
+
+    if(!file.type||!file.type.startsWith('image/')){
+      alert('Selecione uma imagem válida.');
+      input.value='';
+      return;
+    }
+
+    const reader=new FileReader();
+    reader.onload=function(){
+      const source=reader.result;
+      const img=new Image();
+
+      img.onload=function(){
+        try{
+          const max=560;
+          const ow=img.naturalWidth||img.width||1;
+          const oh=img.naturalHeight||img.height||1;
+          const scale=Math.min(1,max/Math.max(ow,oh));
+          const w=Math.max(1,Math.round(ow*scale));
+          const h=Math.max(1,Math.round(oh*scale));
+          const canvas=document.createElement('canvas');
+          canvas.width=w; canvas.height=h;
+          const ctx=canvas.getContext('2d');
+          ctx.drawImage(img,0,0,w,h);
+
+          let data=canvas.toDataURL('image/jpeg',0.62);
+
+          /* Tenta manter a foto bem pequena para não consumir a cota. */
+          if(data.length>120000)data=canvas.toDataURL('image/jpeg',0.48);
+          if(data.length>180000){
+            const c2=document.createElement('canvas');
+            const s2=0.70;
+            c2.width=Math.max(1,Math.round(w*s2));
+            c2.height=Math.max(1,Math.round(h*s2));
+            c2.getContext('2d').drawImage(canvas,0,0,c2.width,c2.height);
+            data=c2.toDataURL('image/jpeg',0.45);
+          }
+
+          window.__pendingPatientPhoto=data;
+          if(input)input.dataset.dataUrl=data;
+          if(preview)preview.innerHTML='<img src="'+data+'" alt="Pré-visualização da foto">';
+        }catch(e){
+          window.__pendingPatientPhoto=source;
+          if(preview)preview.innerHTML='<img src="'+source+'" alt="Pré-visualização da foto">';
+        }
+      };
+
+      img.onerror=function(){
+        window.__pendingPatientPhoto=source;
+        if(preview)preview.innerHTML='<img src="'+source+'" alt="Pré-visualização da foto">';
+      };
+      img.src=source;
+    };
+    reader.readAsDataURL(file);
   };
-}
 
-async function getPhotoForPatient(pid){const p=(db.patients||[]).find(x=>String(x.id)===String(pid));if(!p)return '';if(p.photo)return p.photo;const ph=await loadPhoto(pid);if(ph)p.photo=ph;return ph||'';}
-function getPlan18(pid){try{return typeof getTrainingPlan==='function'?getTrainingPlan(pid):((db.trainingPlans||[]).find(x=>String(x.patientId)===String(pid))||null);}catch(e){return null;}}
-async function printTraining18(title,kind){
-  const pid=String(document.getElementById('tPatient')?.value||'');
-  const p=(db.patients||[]).find(x=>String(x.id)===pid)||null;
-  if(!p){alert('Selecione um paciente antes de gerar a ficha de treino.');return;}
-  const plan=getPlan18(pid);if(!plan){alert('Este paciente ainda não possui uma prescrição salva. Salve a prescrição antes de gerar a ficha.');return;}
-  const photo=await getPhotoForPatient(pid);if(!photo){alert('A foto deste paciente não está disponível. Volte ao Cadastro, selecione a foto e salve novamente.');return;}
-  const v=esc18;let body='<h2>Paciente</h2><div class="patient"><div><b>Paciente</b><span>'+v(p.name)+'</span></div><div><b>Unidade</b><span>'+v(p.unit)+'</span></div><div><b>Idade</b><span>'+v(p.age)+'</span></div></div>';
-  if(kind!=='aerobic'){body+='<h2>Treinamento Resistido</h2>';['A','B','C','D','E'].forEach(w=>{const a=plan.strength?.[w]||[];if(!a.length)return;body+='<h3>Treino '+w+'</h3>';a.forEach(x=>body+='<div class="exercise"><b>'+v(x.name||'Exercício')+'</b><div>'+v(x.load)+' kg · '+v(x.sets)+' séries · '+v(x.reps)+' repetições · intervalo '+v(x.interval)+'</div>'+(x.obs?'<div class="obs">'+v(x.obs)+'</div>':'')+'</div>');});}
-  if(kind!=='strength'){const a=plan.aerobic||{};body+='<h2>Treinamento Aeróbico</h2><div class="grid">'+[['Modalidade',a.modality],['Frequência',a.frequency],['Duração',a.duration],['Intensidade',a.intensity],['Objetivo',a.objective],['FC-alvo',a.fcTarget]].map(x=>'<div><b>'+v(x[0])+'</b><span>'+v(x[1])+'</span></div>').join('')+'</div>';}
-  const w=window.open('','_blank','width=1000,height=800');if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para a plataforma.');return;}
-  const logo=esc18(document.querySelector('.brand-logo')?.src||'');const src=esc18(photo);
-  const html='<!doctype html><html><head><meta charset="utf-8"><title>'+v(title)+'</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;font-size:11px}.no-print{margin-bottom:12px}.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}.logo{width:145px;height:58px;object-fit:contain}.patient-photo{display:block;width:100px;height:100px;object-fit:cover;border:1px solid #cfd6da;border-radius:8px;margin-left:auto}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.patient{display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px}.patient b,.grid b{display:block;font-size:8px;color:#66777e;text-transform:uppercase}.patient span,.grid span{font-weight:700}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.grid>div{border:1px solid #dce5ea;border-radius:6px;padding:7px}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.obs{font-size:9px;color:#4e626b;margin-top:4px}h2{font-size:14px;color:#0753aa;border-bottom:1px solid #dbe5eb;padding-bottom:4px}h3{font-size:12px;color:#0753aa}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}@media print{.no-print{display:none}}</style></head><body><div class="no-print"><button onclick="window.print()">Imprimir / Salvar como PDF</button> <button onclick="window.close()">Fechar</button></div><div class="head">'+(logo?'<img class="logo" src="'+logo+'">':'')+'<img id="patientPhoto" class="patient-photo" src="'+src+'" alt="Foto do paciente"><div class="title"><h1>Moviment’ Up — Prescrição de Exercício</h1><div>Casa de David — Treinamento Inclusivo</div></div></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David.</div></body></html>';
-  w.document.open();w.document.write(html);w.document.close();
-  const im=w.document.getElementById('patientPhoto');const go=()=>{if(w.__muPrinted)return;w.__muPrinted=true;w.focus();setTimeout(()=>w.print(),400)};
-  if(im){if(im.complete&&im.naturalWidth>0)go();else{im.onload=go;im.onerror=()=>alert('A foto foi encontrada, mas não pôde ser carregada na ficha.');setTimeout(()=>{if(im.complete&&im.naturalWidth>0)go()},5000)}}else go();
-}
-window.printStrengthTrainingSheet=()=>printTraining18('Ficha do Treinamento Resistido','strength');
-window.printAerobicTrainingSheet=()=>printTraining18('Ficha do Treinamento Aeróbico','aerobic');
-window.printCompleteTrainingSheet=()=>printTraining18('Ficha Completa de Treino','complete');
-const tn=document.querySelector('#nav button[onclick="show(\'training\')"]');if(tn)tn.addEventListener('click',()=>setTimeout(()=>tn.classList.add('nav-active'),20));
-setTimeout(hydratePhotos,150);
-})();
-</script>
-</body></html>
-<style id="v13-photo-pdf-fix">
-.patient-photo{display:block!important;width:100px!important;height:100px!important;object-fit:cover!important;border:1px solid #cfd6da!important;border-radius:8px!important;margin-left:auto!important}
-</style>
-<script id="v13-photo-pdf-fix-script">
-(function(){
-'use strict';
-const PDB='moviment_up_patient_photos_v1', STORE='photos';
-function openPDB(){return new Promise((resolve,reject)=>{if(!window.indexedDB)return reject(Error('IndexedDB indisponível'));const r=indexedDB.open(PDB,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE,{keyPath:'patientId'})};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error||Error('Falha IndexedDB'))})}
-function putPhoto(id,photo){return openPDB().then(d=>new Promise((res,rej)=>{const t=d.transaction(STORE,'readwrite');t.objectStore(STORE).put({patientId:String(id),photo,updatedAt:Date.now()});t.oncomplete=()=>{d.close();res()};t.onerror=()=>{d.close();rej(t.error||Error('Falha ao salvar foto'))}}))}
-function getAllPhotos(){return openPDB().then(d=>new Promise((res,rej)=>{const t=d.transaction(STORE,'readonly'),q=t.objectStore(STORE).getAll();q.onsuccess=()=>{const a=q.result||[];d.close();res(a)};q.onerror=()=>{d.close();rej(q.error||Error('Falha ao ler fotos'))}}))}
-async function hydratePhotos(){try{const rows=await getAllPhotos(),m=new Map(rows.map(x=>[String(x.patientId),x.photo]));(db.patients||[]).forEach(p=>{const ph=m.get(String(p.id));if(ph)p.photo=ph});if(typeof populateSelects==='function')populateSelects();if(typeof renderPatients==='function')renderPatients()}catch(e){console.warn('Fotos: não foi possível carregar do armazenamento local',e)}}
-window.__savePatientPhotosToIDB=async function(){const ps=(db.patients||[]).filter(p=>p&&p.id&&p.photo);await Promise.all(ps.map(p=>putPhoto(p.id,p.photo).catch(e=>console.warn('Foto não salva',e))));};
-window.__loadPatientPhotosFromIDB=hydratePhotos;
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(hydratePhotos,100));else setTimeout(hydratePhotos,100);
+  /* Captura o paciente salvo pela função já existente, sem substituir
+     nem reimplementar o cadastro inteiro. */
+  const previousSave=window.savePatient;
 
-// Reforça o salvamento da foto sem alterar o cadastro nem duplicar registros.
-const prevSave=window.savePatient;
-if(typeof prevSave==='function')window.savePatient=async function(){
- const before=new Set((db.patients||[]).map(p=>String(p.id))),name=document.getElementById('pName')?.value||'',iid=document.getElementById('pId')?.value||'';
- let photo=window.__pendingPatientPhoto||'';
- const f=document.getElementById('pPhoto')?.files?.[0];
- if(f&&!photo){try{photo=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(f)})}catch(e){return prevSave.apply(this,arguments)}}
- const result=await Promise.resolve(prevSave.apply(this,arguments));
- let p=(db.patients||[]).find(x=>!before.has(String(x.id)));
- if(!p){const n=String(name).trim().toLowerCase(),i=String(iid).trim().toLowerCase();p=(db.patients||[]).slice().reverse().find(x=>(i&&String(x.internalId||'').trim().toLowerCase()===i)||(n&&String(x.name||'').trim().toLowerCase()===n))||null}
- if(p&&photo)p.photo=photo;
- if(p&&p.photo)await putPhoto(p.id,p.photo).catch(e=>console.warn('Foto: falha no armazenamento local',e));
- if(p){try{const box=document.getElementById('pPhotoPreview');if(box)box.innerHTML='<img src="'+String(p.photo||'').replace(/"/g,'&quot;')+'" alt="Foto do paciente"><div class="small muted">Foto cadastrada.</div>'}catch(e){}}
- return result;
-};
+  if(typeof previousSave==='function'&&!window.__v18PhotoSaveWrapped){
+    window.__v18PhotoSaveWrapped=true;
 
-async function currentPatientPhotoFromIDB(pid){
- try{
-  if(!window.indexedDB)return '';
-  const d=await openPDB();
-  return await new Promise((resolve,reject)=>{
-   const t=d.transaction(STORE,'readonly'),q=t.objectStore(STORE).get(String(pid));
-   q.onsuccess=()=>{const row=q.result;d.close();resolve(row?.photo||'')};
-   q.onerror=()=>{d.close();reject(q.error||Error('Falha ao ler foto'))};
-  });
- }catch(e){return ''}
-}
-async function printTraining(title,kind){
- const pid=String(document.getElementById('tPatient')?.value||'');
- const p=(db.patients||[]).find(x=>String(x.id)===pid)||null;
- if(!p){alert('Selecione um paciente antes de gerar a ficha de treino.');return}
- const plan=currentPlan(p.id);if(!plan){alert('Este paciente ainda não possui uma prescrição salva. Salve a prescrição antes de gerar a ficha.');return}
- // A foto pode estar no IndexedDB e não mais em p.photo. Aguarda a leitura antes de montar a janela de impressão.
- let photo=p.photo||'';
- if(!photo) photo=await currentPatientPhotoFromIDB(p.id);
- if(photo)p.photo=photo;
- const logo=document.querySelector('.brand-logo')?.src||'';const v=x=>escV(x==null||x===''?'—':x);
- let body='<h2>Paciente</h2><div class="patient"><div><b>Paciente</b><span>'+v(p.name)+'</span></div><div><b>Unidade</b><span>'+v(p.unit)+'</span></div><div><b>Idade</b><span>'+v(p.age)+'</span></div></div>';
- if(kind!=='aerobic'){body+='<h2>Treinamento Resistido</h2>';['A','B','C','D','E'].forEach(w=>{const a=plan.strength?.[w]||[];if(!a.length)return;body+='<h3>Treino '+w+'</h3>';a.forEach(x=>body+='<div class="exercise"><b>'+v(x.name||'Exercício')+'</b><div>'+v(x.load)+' kg · '+v(x.sets)+' séries · '+v(x.reps)+' repetições · intervalo '+v(x.interval)+'</div>'+(x.obs?'<div class="obs">'+v(x.obs)+'</div>':'')+'</div>')})}
- if(kind!=='strength'){const a=plan.aerobic||{};body+='<h2>Treinamento Aeróbico</h2><div class="grid">'+[['Modalidade',a.modality],['Frequência',a.frequency],['Duração',a.duration],['Intensidade',a.intensity],['Objetivo',a.objective],['FC-alvo',a.fcTarget]].map(x=>'<div><b>'+v(x[0])+'</b><span>'+v(x[1])+'</span></div>').join('')+'</div>'}
- const w=window.open('','_blank','width=1000,height=800');if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para a plataforma.');return}
- const photoHTML=photo?'<img id="patientPhoto" class="patient-photo" src="'+String(photo).replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'" alt="Foto do paciente">':'';
- w.document.open();w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+v(title)+'</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;font-size:11px}.no-print{margin-bottom:12px}.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}.logo{width:145px;height:58px;object-fit:contain}.patient-photo{display:block;width:100px;height:100px;object-fit:cover;border:1px solid #cfd6da;border-radius:8px;margin-left:auto;flex:0 0 auto}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.patient{display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px}.patient b,.grid b{display:block;font-size:8px;color:#66777e;text-transform:uppercase}.patient span,.grid span{font-weight:700}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.grid>div{border:1px solid #dce5ea;border-radius:6px;padding:7px}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.obs{font-size:9px;color:#4e626b;margin-top:4px}h2{font-size:14px;color:#0753aa;border-bottom:1px solid #dbe5eb;padding-bottom:4px}h3{font-size:12px;color:#0753aa}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}@media print{.no-print{display:none}}</style></head><body><div class="no-print"><button onclick="window.print()">Imprimir / Salvar como PDF</button> <button onclick="window.close()">Fechar</button></div><div class="head">'+(logo?'<img class="logo" src="'+logo+'">':'')+photoHTML+'<div class="title"><h1>Moviment’ Up — Prescrição de Exercício</h1><div>Casa de David — Treinamento Inclusivo</div></div></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David.</div></body></html>');w.document.close();
- const im=w.document.getElementById('patientPhoto');
- const go=()=>{w.focus();setTimeout(()=>w.print(),500)};
- if(im){if(im.complete&&im.naturalWidth>0)go();else{im.onload=go;im.onerror=go;setTimeout(go,4000)}}else go();
-}
-window.printStrengthTrainingSheet=()=>printTraining('Ficha do Treinamento Resistido','strength');
-window.printAerobicTrainingSheet=()=>printTraining('Ficha do Treinamento Aeróbico','aerobic');
-window.printCompleteTrainingSheet=()=>printTraining('Ficha Completa de Treino','complete');
-})();
-</script>
-</body>
-</html>
+    window.savePatient=async function(){
+      const before=new Set(patients().map(p=>String(p.id)));
+      const editId=window.currentPatientEditId||window.__currentPatientEditId||'';
+      const pending=window.__pendingPatientPhoto||'';
+      const name=(E('pName')?.value||'').trim();
 
-<style id="v15-photo-pdf-robust">#movimentUpPhotoPdfPreview{position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;overflow:hidden}</style>
-<script id="v15-photo-pdf-robust-script">
-(function(){
-'use strict';
-function patientByTraining(){
- const pid=String(document.getElementById('tPatient')?.value||'');
- return (window.db?.patients||[]).find(p=>String(p.id)===pid)||null;
-}
-function dataUrlToBlobUrl(data){
- try{
-  if(!data||typeof data!=='string')return '';
-  if(data.startsWith('blob:')||data.startsWith('http:')||data.startsWith('https:'))return data;
-  const m=data.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);if(!m)return '';
-  const mime=m[1]||'image/jpeg',b64=!!m[2],raw=b64?atob(m[3]):decodeURIComponent(m[3]);
-  const bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
-  return URL.createObjectURL(new Blob([bytes],{type:mime}));
- }catch(e){return ''}
-}
-function getPhotoIDB(pid){
- return new Promise(resolve=>{
-  try{
-   const r=indexedDB.open('moviment_up_patient_photos_v1',1);
-   r.onerror=()=>resolve('');
-   r.onsuccess=()=>{const d=r.result;
-    if(!d.objectStoreNames.contains('photos')){d.close();resolve('');return}
-    const q=d.transaction('photos','readonly').objectStore('photos').get(String(pid));
-    q.onsuccess=()=>{const v=q.result?.photo||'';d.close();resolve(v)};
-    q.onerror=()=>{d.close();resolve('')};
-   };
-  }catch(e){resolve('')}
- })
-}
-async function robustTrainingPhotoPrint(title,kind){
- const p=patientByTraining();
- if(!p){alert('Selecione um paciente antes de gerar a ficha de treino.');return}
- const plan=typeof currentPlan==='function'?currentPlan(p.id):null;
- if(!plan){alert('Este paciente ainda não possui uma prescrição salva. Salve a prescrição antes de gerar a ficha.');return}
- let photo=p.photo||'';
- if(!photo)photo=await getPhotoIDB(p.id);
- if(!photo){alert('Este paciente não possui uma foto cadastrada. Salve a foto no Cadastro antes de gerar o PDF.');return}
- const blobUrl=dataUrlToBlobUrl(photo)||photo;
- const v=typeof escV==='function'?escV:(x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
- const logo=document.querySelector('.brand-logo')?.src||'';
- let body='<h2>Paciente</h2><div class="patient"><div><b>Paciente</b><span>'+v(p.name)+'</span></div><div><b>Unidade</b><span>'+v(p.unit)+'</span></div><div><b>Idade</b><span>'+v(p.age)+'</span></div></div>';
- if(kind!=='aerobic'){
-  body+='<h2>Treinamento Resistido</h2>';['A','B','C','D','E'].forEach(w=>{const a=plan.strength?.[w]||[];if(!a.length)return;body+='<h3>Treino '+w+'</h3>';a.forEach(x=>body+='<div class="exercise"><b>'+v(x.name||'Exercício')+'</b><div>'+v(x.load)+' kg · '+v(x.sets)+' séries · '+v(x.reps)+' repetições · intervalo '+v(x.interval)+'</div>'+(x.obs?'<div class="obs">'+v(x.obs)+'</div>':'')+'</div>')})
- }
- if(kind!=='strength'){
-  const a=plan.aerobic||{};body+='<h2>Treinamento Aeróbico</h2><div class="grid">'+[['Modalidade',a.modality],['Frequência',a.frequency],['Duração',a.duration],['Intensidade',a.intensity],['Objetivo',a.objective],['FC-alvo',a.fcTarget]].map(x=>'<div><b>'+v(x[0])+'</b><span>'+v(x[1])+'</span></div>').join('')+'</div>';
- }
- const w=window.open('','_blank','width=1000,height=800');
- if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para a plataforma.');return}
- const html='<!doctype html><html><head><meta charset="utf-8"><title>'+v(title)+'</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;font-size:11px}.no-print{margin-bottom:12px}.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}.logo{width:145px;height:58px;object-fit:contain}.patient-photo{display:block;width:100px;height:100px;object-fit:cover;border:1px solid #cfd6da;border-radius:8px;margin-left:auto;flex:0 0 auto}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.patient{display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px}.patient b,.grid b{display:block;font-size:8px;color:#66777e;text-transform:uppercase}.patient span,.grid span{font-weight:700}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.grid>div{border:1px solid #dce5ea;border-radius:6px;padding:7px}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.obs{font-size:9px;color:#4e626b;margin-top:4px}h2{font-size:14px;color:#0753aa;border-bottom:1px solid #dbe5eb;padding-bottom:4px}h3{font-size:12px;color:#0753aa}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}@media print{.no-print{display:none}}</style></head><body><div class="no-print"><button onclick="window.print()">Imprimir / Salvar como PDF</button> <button onclick="window.close()">Fechar</button></div><div class="head">'+(logo?'<img class="logo" src="'+String(logo).replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'">':'')+'<img id="patientPhoto" class="patient-photo" src="'+String(blobUrl).replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'" alt="Foto do paciente"><div class="title"><h1>Moviment’ Up — Prescrição de Exercício</h1><div>Casa de David — Treinamento Inclusivo</div></div></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David.</div></body></html>';
- w.document.open();w.document.write(html);w.document.close();
- const im=w.document.getElementById('patientPhoto');
- const doPrint=()=>{try{w.focus();w.print()}finally{if(blobUrl.startsWith('blob:'))setTimeout(()=>URL.revokeObjectURL(blobUrl),10000)}};
- if(im){if(im.complete&&im.naturalWidth>0)setTimeout(doPrint,250);else{im.onload=()=>setTimeout(doPrint,250);im.onerror=()=>{alert('A foto foi encontrada, mas o navegador não conseguiu carregá-la na ficha.');if(blobUrl.startsWith('blob:'))URL.revokeObjectURL(blobUrl)};setTimeout(()=>{if(im.complete&&im.naturalWidth>0)doPrint()},5000)}}else doPrint();
-}
-window.printStrengthTrainingSheet=()=>robustTrainingPhotoPrint('Ficha do Treinamento Resistido','strength');
-window.printAerobicTrainingSheet=()=>robustTrainingPhotoPrint('Ficha do Treinamento Aeróbico','aerobic');
-window.printCompleteTrainingSheet=()=>robustTrainingPhotoPrint('Ficha Completa de Treino','complete');
-})();
-</script>
+      const result=previousSave.apply(this,arguments);
+      await Promise.resolve(result);
 
+      try{
+        let target=editId?patientById(editId):null;
 
-<style id="v16-foto-pdf-definitivo">
-#nav button[onclick="show('training')"].nav-active{background:linear-gradient(180deg,#2479dc,#0758b9)!important;color:#fff!important}
-</style>
-<script id="v16-foto-pdf-definitivo-script">
-(function(){
-'use strict';
+        if(!target){
+          target=patients().find(p=>!before.has(String(p.id)));
+        }
 
-function v16Esc(x){return String(x==null||x===''?'—':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function v16GetPatient(){
-  const pid=String(document.getElementById('tPatient')?.value||'');
-  return (db.patients||[]).find(p=>String(p.id)===pid)||null;
-}
-function v16GetPlan(pid){
-  try{
-    if(typeof getTrainingPlan==='function') return getTrainingPlan(pid);
-    return (db.trainingPlans||[]).find(x=>String(x.patientId)===String(pid))||null;
-  }catch(e){return null}
-}
-function v16OpenPhotoDB(){
-  return new Promise((resolve,reject)=>{
-    if(!window.indexedDB)return reject(new Error('IndexedDB indisponível'));
-    const r=indexedDB.open('moviment_up_patient_photos_v1',1);
-    r.onerror=()=>reject(r.error||new Error('Falha ao abrir armazenamento de fotos'));
-    r.onsuccess=()=>resolve(r.result);
-    r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains('photos'))r.result.createObjectStore('photos',{keyPath:'patientId'});};
-  });
-}
-function v16ReadPhoto(pid){
-  return v16OpenPhotoDB().then(d=>new Promise((resolve,reject)=>{
-    if(!d.objectStoreNames.contains('photos')){d.close();resolve('');return}
-    const q=d.transaction('photos','readonly').objectStore('photos').get(String(pid));
-    q.onsuccess=()=>{const photo=q.result?.photo||'';d.close();resolve(photo)};
-    q.onerror=()=>{d.close();reject(q.error||new Error('Falha ao ler foto'))};
-  })).catch(()=> '');
-}
-function v16PhotoDataUrl(photo){
-  if(!photo)return '';
-  if(String(photo).startsWith('data:image/'))return String(photo);
-  return String(photo);
-}
-async function v16PrintTraining(title,kind){
-  const p=v16GetPatient();
-  if(!p){alert('Selecione um paciente antes de gerar a ficha de treino.');return;}
-  const plan=v16GetPlan(p.id);
-  if(!plan){alert('Este paciente ainda não possui uma prescrição salva. Salve a prescrição antes de gerar a ficha.');return;}
+        if(!target&&name){
+          const matches=patients().filter(p=>String(p.name||'').trim()===name);
+          target=matches[matches.length-1];
+        }
 
-  let photo=String(p.photo||'');
-  if(!photo)photo=await v16ReadPhoto(p.id);
-  if(photo)p.photo=photo;
-  if(!photo){alert('A foto deste paciente não está disponível no armazenamento. Abra o Cadastro, selecione a foto e salve novamente antes de gerar o PDF.');return;}
+        if(target){
+          const oldPhoto=readPhoto(target.id);
 
-  let body='<h2>Paciente</h2><div class="patient"><div><b>Paciente</b><span>'+v16Esc(p.name)+'</span></div><div><b>Unidade</b><span>'+v16Esc(p.unit)+'</span></div><div><b>Idade</b><span>'+v16Esc(p.age)+'</span></div></div>';
-  if(kind!=='aerobic'){
-    body+='<h2>Treinamento Resistido</h2>';
-    ['A','B','C','D','E'].forEach(w=>{
-      const a=plan.strength?.[w]||[]; if(!a.length)return;
-      body+='<h3>Treino '+w+'</h3>';
-      a.forEach(x=>body+='<div class="exercise"><b>'+v16Esc(x.name||'Exercício')+'</b><div>'+v16Esc(x.load)+' kg · '+v16Esc(x.sets)+' séries · '+v16Esc(x.reps)+' repetições · intervalo '+v16Esc(x.interval)+'</div>'+(x.obs?'<div class="obs">'+v16Esc(x.obs)+'</div>':'')+'</div>');
+          if(pending){
+            writePhoto(target.id,pending);
+            target.photo=pending;
+          }else if(oldPhoto){
+            target.photo=oldPhoto;
+          }
+
+          window.currentPatientEditId=target.id;
+          window.__currentPatientEditId=target.id;
+          restorePreview(target);
+
+          if(typeof renderPatientsEnhanced==='function')renderPatientsEnhanced();
+          else if(typeof renderPatients==='function')renderPatients();
+          if(typeof populateSelects==='function')populateSelects();
+        }
+      }catch(e){
+        console.warn('Integração de foto V18:',e);
+      }
+
+      window.__pendingPatientPhoto='';
+      const input=E('pPhoto');
+      if(input){input.value='';delete input.dataset.dataUrl;}
+
+      return result;
+    };
+  }
+
+  /* Edição: recupera a foto pelo ID, mesmo que o objeto principal não
+     contenha mais a imagem. */
+  const previousEdit=window.editPatientClinical;
+  if(typeof previousEdit==='function'&&!window.__v18PhotoEditWrapped){
+    window.__v18PhotoEditWrapped=true;
+
+    window.editPatientClinical=function(pid){
+      const result=previousEdit.apply(this,arguments);
+
+      setTimeout(function(){
+        try{
+          const p=patientById(pid);
+          if(p){
+            const photo=hydratePatientPhoto(pid);
+            if(photo)p.photo=photo;
+            window.currentPatientEditId=p.id;
+            window.__currentPatientEditId=p.id;
+            restorePreview(p);
+          }
+        }catch(e){}
+      },0);
+
+      return result;
+    };
+  }
+
+  /* Se limpar o cadastro, limpa somente a seleção/preview.
+     Não apaga a foto já cadastrada do paciente. */
+  const previousClear=window.clearPatient;
+  if(typeof previousClear==='function'&&!window.__v18PhotoClearWrapped){
+    window.__v18PhotoClearWrapped=true;
+
+    window.clearPatient=function(){
+      const result=previousClear.apply(this,arguments);
+      window.__pendingPatientPhoto='';
+      const input=E('pPhoto');
+      if(input)input.value='';
+      const pv=E('pPhotoPreview');
+      if(pv)pv.innerHTML='';
+      return result;
+    };
+  }
+
+  /* ============================================================
+     PDF DA PRESCRIÇÃO — UM ÚNICO GERADOR
+     ============================================================ */
+
+  function trainingPid(){
+    return (E('tPatient')?.value||window.currentTrainingPatientId||'');
+  }
+
+  function escHtml(v){
+    return String(v==null||v===''?'—':v).replace(/[&<>"']/g,function(m){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
     });
   }
-  if(kind!=='strength'){
-    const a=plan.aerobic||{};
-    body+='<h2>Treinamento Aeróbico</h2><div class="grid">'+[['Modalidade',a.modality],['Frequência',a.frequency],['Duração',a.duration],['Intensidade',a.intensity],['Objetivo',a.objective],['FC-alvo',a.fcTarget]].map(x=>'<div><b>'+v16Esc(x[0])+'</b><span>'+v16Esc(x[1])+'</span></div>').join('')+'</div>';
+
+  function formatAnyDate(v){
+    try{
+      return typeof formatDate==='function'?formatDate(v):String(v||'—');
+    }catch(e){return String(v||'—')}
   }
 
-  const w=window.open('','_blank','width=1000,height=800');
-  if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para a plataforma.');return;}
-  const photoSrc=v16PhotoDataUrl(photo).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-  const logo=(document.querySelector('.brand-logo')?.src||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-  const html='<!doctype html><html><head><meta charset="utf-8"><title>'+v16Esc(title)+'</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;font-size:11px}.no-print{margin-bottom:12px}.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}.logo{width:145px;height:58px;object-fit:contain}.patient-photo{display:block;width:100px;height:100px;object-fit:cover;border:1px solid #cfd6da;border-radius:8px;margin-left:auto;flex:0 0 auto}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.patient{display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px}.patient b,.grid b{display:block;font-size:8px;color:#66777e;text-transform:uppercase}.patient span,.grid span{font-weight:700}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.grid>div{border:1px solid #dce5ea;border-radius:6px;padding:7px}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.obs{font-size:9px;color:#4e626b;margin-top:4px}h2{font-size:14px;color:#0753aa;border-bottom:1px solid #dbe5eb;padding-bottom:4px}h3{font-size:12px;color:#0753aa}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}@media print{.no-print{display:none}}</style></head><body><div class="no-print"><button onclick="window.print()">Imprimir / Salvar como PDF</button> <button onclick="window.close()">Fechar</button></div><div class="head">'+(logo?'<img class="logo" src="'+logo+'">':'')+'<img id="patientPhoto" class="patient-photo" src="'+photoSrc+'" alt="Foto do paciente"><div class="title"><h1>Moviment’ Up — Prescrição de Exercício</h1><div>Casa de David — Treinamento Inclusivo</div></div></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David.</div></body></html>';
-  w.document.open();w.document.write(html);w.document.close();
-  const im=w.document.getElementById('patientPhoto');
-  const go=()=>{if(w.__v16Printed)return;w.__v16Printed=true;w.focus();setTimeout(()=>w.print(),250)};
-  if(im){
-    if(im.complete && im.naturalWidth>0)go();
-    else {im.onload=go;im.onerror=()=>alert('A foto foi localizada, mas o navegador não conseguiu carregá-la na ficha.');setTimeout(()=>{if(im.complete&&im.naturalWidth>0)go()},5000)}
-  }else go();
-}
-window.printStrengthTrainingSheet=()=>v16PrintTraining('Ficha do Treinamento Resistido','strength');
-window.printAerobicTrainingSheet=()=>v16PrintTraining('Ficha do Treinamento Aeróbico','aerobic');
-window.printCompleteTrainingSheet=()=>v16PrintTraining('Ficha Completa de Treino','complete');
+  function trainingPlan(pid){
+    try{
+      return typeof getTrainingPlan==='function'
+        ?getTrainingPlan(pid)
+        :(getDBSafe()?.trainingPlans||[]).find(x=>String(x.patientId)===String(pid));
+    }catch(e){return null}
+  }
 
-// Ao abrir/selecionar o paciente na Prescrição, recupera a foto do armazenamento e mantém o objeto em db.
-window.__v16HydrateCurrentTrainingPhoto=async function(){
-  const p=v16GetPatient(); if(!p)return;
-  if(!p.photo){const ph=await v16ReadPhoto(p.id);if(ph)p.photo=ph;}
-};
-const tsel=document.getElementById('tPatient');
-if(tsel)tsel.addEventListener('change',()=>window.__v16HydrateCurrentTrainingPhoto());
-window.__v16HydrateCurrentTrainingPhoto();
+  function strengthHTML(p,plan){
+    let h='';
+    h+='<div class="patient-grid">';
+    h+='<div><b>Paciente</b><span>'+escHtml(p.name)+'</span></div>';
+    h+='<div><b>Unidade</b><span>'+escHtml(p.unit||p.unidade)+'</span></div>';
+    h+='<div><b>Sexo</b><span>'+escHtml(p.sex)+'</span></div>';
+    h+='<div><b>Data da prescrição</b><span>'+escHtml(plan?.date?formatAnyDate(plan.date):'—')+'</span></div>';
+    h+='</div>';
+
+    h+='<div class="field"><b>Professor responsável</b><span>'+escHtml(plan?.professor)+'</span></div>';
+
+    if(plan?.objectives?.length){
+      h+='<h2>Objetivos</h2><div class="field"><span>'+plan.objectives.map(escHtml).join(' • ')+'</span></div>';
+    }
+
+    ['A','B','C','D','E'].forEach(function(div){
+      const arr=plan?.strength?.[div]||[];
+      h+='<h2>TREINO '+div+'</h2>';
+
+      if(!arr.length){
+        h+='<div class="field"><span>Nenhum exercício prescrito.</span></div>';
+        return;
+      }
+
+      arr.forEach(function(ex,i){
+        const reg=ex.reg||{};
+        h+='<div class="exercise">';
+        h+='<div class="exercise-head"><b>'+(i+1)+'. '+escHtml(ex.name)+'</b>';
+        h+='<span>Reg.: '+escHtml([reg.A,reg.F,reg.D,reg.E,reg.B].filter(Boolean).join(' / '))+'</span></div>';
+        h+='<div class="exercise-grid">';
+        h+='<div><b>Carga</b><span>'+escHtml(ex.load)+'</span></div>';
+        h+='<div><b>Séries</b><span>'+escHtml(ex.sets)+'</span></div>';
+        h+='<div><b>Repetições</b><span>'+escHtml(ex.reps)+'</span></div>';
+        h+='<div><b>Intervalo</b><span>'+escHtml(ex.interval)+'</span></div>';
+        h+='<div><b>Observação</b><span>'+escHtml(ex.obs)+'</span></div>';
+        h+='</div></div>';
+      });
+    });
+
+    return h;
+  }
+
+  function aerobicHTML(p,plan){
+    const a=plan?.aerobic||{};
+    let h='<div class="patient-grid">';
+    h+='<div><b>Paciente</b><span>'+escHtml(p.name)+'</span></div>';
+    h+='<div><b>Unidade</b><span>'+escHtml(p.unit||p.unidade)+'</span></div>';
+    h+='<div><b>Sexo</b><span>'+escHtml(p.sex)+'</span></div>';
+    h+='<div><b>Data da prescrição</b><span>'+escHtml(plan?.date?formatAnyDate(plan.date):'—')+'</span></div></div>';
+    h+='<div class="field"><b>Professor responsável</b><span>'+escHtml(plan?.professor)+'</span></div>';
+    h+='<h2>Prescrição aeróbica</h2><div class="aero-grid">';
+
+    [
+      ['Modalidade',a.modality],
+      ['Frequência semanal',a.frequency!=null?a.frequency+' vezes/semana':null],
+      ['Duração',a.duration!=null?a.duration+' min':null],
+      ['Intensidade',a.intensity],
+      ['Objetivo',a.objective],
+      ['FCmáx estimada',a.fcMax],
+      ['FC repouso',a.fcRest],
+      ['FC reserva',a.fcReserve],
+      ['FC-alvo',a.fcTarget],
+      ['Velocidade',a.speed!=null?a.speed+' km/h':null],
+      ['Distância',a.distance!=null?a.distance+' km':null],
+      ['Nível',a.level]
+    ].forEach(function(x){
+      h+='<div class="field"><b>'+escHtml(x[0])+'</b><span>'+escHtml(x[1])+'</span></div>';
+    });
+
+    h+='</div>';
+    if((a.functionalParts||[]).length)
+      h+='<div class="field"><b>Treino funcional</b><span>'+a.functionalParts.map(escHtml).join(' • ')+'</span></div>';
+    if(a.obs)
+      h+='<div class="field"><b>Observações</b><span>'+escHtml(a.obs).replace(/\n/g,'<br>')+'</span></div>';
+
+    return h;
+  }
+
+  function openTrainingPDF(title,body,p){
+    const photo=readPhoto(p.id)||p.photo||'';
+    const w=window.open('','_blank','width=1000,height=800');
+
+    if(!w){
+      alert('O navegador bloqueou a janela do PDF. Permita pop-ups para esta plataforma.');
+      return;
+    }
+
+    const photoHTML=photo
+      ?'<img id="patientPhoto" class="patient-photo" src="'+photo+'" alt="Foto do paciente">'
+      :'<div class="patient-photo empty-photo">Sem foto</div>';
+
+    w.document.open();
+    w.document.write(
+      '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">'+
+      '<title>'+escHtml(title)+'</title>'+
+      '<style>'+
+      '@page{size:A4;margin:12mm}'+
+      'body{font-family:Arial,Helvetica,sans-serif;color:#17324d;margin:0;background:#fff;font-size:11px}'+
+      '.toolbar{margin-bottom:12px}.toolbar button{padding:8px 14px;font-weight:700;border:0;border-radius:6px;background:#075fc7;color:#fff;cursor:pointer}'+
+      '.head{display:flex;align-items:center;gap:15px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}'+
+      '.patient-photo{width:92px;height:92px;object-fit:cover;border-radius:10px;border:2px solid #e05288;flex:0 0 auto;background:#f4f8fb}'+
+      '.empty-photo{display:flex;align-items:center;justify-content:center;color:#71818a;font-size:10px}'+
+      '.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.title p{margin:0;color:#657780;font-size:10px}'+
+      '.patient-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:7px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px;margin-bottom:9px}'+
+      '.patient-grid b,.field b,.exercise-grid b{display:block;font-size:8px;color:#66777e;text-transform:uppercase;margin-bottom:3px}'+
+      '.patient-grid span,.field span,.exercise-grid span{font-weight:700}'+
+      '.field{border:1px solid #dce5ea;border-radius:6px;padding:7px;margin:7px 0}'+
+      'h2{font-size:14px;color:#0753aa;margin:13px 0 7px;border-bottom:1px solid #dbe5eb;padding-bottom:4px}'+
+      '.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}'+
+      '.exercise-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;margin-bottom:6px}'+
+      '.exercise-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.exercise-grid>div{background:#f7fafb;border-radius:5px;padding:5px;min-height:28px}'+
+      '.aero-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}'+
+      '.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}'+
+      '@media print{.toolbar{display:none}.exercise{break-inside:avoid}}'+
+      '</style></head><body>'+
+      '<div class="toolbar"><button onclick="window.print()">Imprimir / Salvar como PDF</button> <button onclick="window.close()">Fechar</button></div>'+
+      '<div class="head">'+photoHTML+
+      '<div class="title"><h1>'+escHtml(title)+'</h1><p>Moviment’ Up — Treinamento Inclusivo Adaptado · Casa de David</p></div></div>'+
+      body+
+      '<div class="footer">Moviment’ Up — Treinamento Inclusivo | Casa de David</div>'+
+      '</body></html>'
+    );
+    w.document.close();
+
+    const img=w.document.getElementById('patientPhoto');
+    const printNow=function(){
+      try{w.focus();w.print()}catch(e){}
+    };
+
+    if(img){
+      if(img.complete&&img.naturalWidth>0)setTimeout(printNow,120);
+      else{
+        img.onload=function(){setTimeout(printNow,80)};
+        img.onerror=function(){setTimeout(printNow,120)};
+      }
+    }else{
+      setTimeout(printNow,120);
+    }
+  }
+
+  function printStrength(){
+    const pid=trainingPid();
+    const p=patientById(pid);
+
+    if(!p){
+      alert('Selecione um paciente antes de gerar a ficha.');
+      return;
+    }
+
+    const photo=hydratePatientPhoto(pid);
+    const plan=trainingPlan(pid);
+
+    if(!plan){
+      alert('Não existe prescrição de treino registrada para este paciente.');
+      return;
+    }
+
+    openTrainingPDF('FICHA DE TREINAMENTO RESISTIDO',strengthHTML(p,plan),p);
+  }
+
+  function printAerobic(){
+    const pid=trainingPid();
+    const p=patientById(pid);
+
+    if(!p){
+      alert('Selecione um paciente antes de gerar a ficha.');
+      return;
+    }
+
+    const plan=trainingPlan(pid);
+    if(!plan){
+      alert('Não existe prescrição de treino registrada para este paciente.');
+      return;
+    }
+
+    openTrainingPDF('FICHA DE TREINAMENTO AERÓBICO',aerobicHTML(p,plan),p);
+  }
+
+  function printComplete(){
+    const pid=trainingPid();
+    const p=patientById(pid);
+
+    if(!p){
+      alert('Selecione um paciente antes de gerar a ficha.');
+      return;
+    }
+
+    const plan=trainingPlan(pid);
+    if(!plan){
+      alert('Não existe prescrição de treino registrada para este paciente.');
+      return;
+    }
+
+    openTrainingPDF(
+      'FICHA COMPLETA DE TREINO',
+      strengthHTML(p,plan)+aerobicHTML(p,plan),
+      p
+    );
+  }
+
+  /* Substituição única dos três botões de impressão. */
+  window.printStrengthTrainingSheet=printStrength;
+  window.printAerobicTrainingSheet=printAerobic;
+  window.printCompleteTrainingSheet=printComplete;
+
+  /* Reidrata fotos já existentes no armazenamento local quando a página abre. */
+  function hydrateAll(){
+    try{
+      patients().forEach(function(p){
+        if(p&&p.id&&!p.photo){
+          const photo=readPhoto(p.id);
+          if(photo)p.photo=photo;
+        }
+      });
+      if(typeof populateSelects==='function')populateSelects();
+    }catch(e){}
+  }
+
+  if(document.readyState==='loading')
+    document.addEventListener('DOMContentLoaded',function(){setTimeout(hydrateAll,80)});
+  else
+    setTimeout(hydrateAll,80);
+
 })();
 </script>
-
-
-<style id="v17-photo-local-final">
-#nav button[onclick="show('training')"].nav-active{background:linear-gradient(180deg,#2479dc,#0758b9)!important;color:#fff!important}
-#v17PrescriptionPhoto{display:block;width:96px;height:96px;object-fit:cover;border-radius:8px;border:1px solid #cfd6da;margin-top:6px}
+<style id="moviment-up-v18-prescricao-blue">
+#nav button[onclick="show('training')"].nav-active{
+  background:linear-gradient(180deg,#2479dc,#0758b9)!important;
+  color:#fff!important;
+  box-shadow:inset 0 -1px #034b9e,0 1px 2px #0002!important;
+}
 </style>
-<script id="v17-photo-local-final-script">
-(function(){
-'use strict';
-const PHOTO_KEY='moviment_up_patient_photos_local_v2';
-const $id=id=>document.getElementById(id);
-function esc17(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function readPhotoMap(){try{const x=JSON.parse(localStorage.getItem(PHOTO_KEY)||'{}');return x&&typeof x==='object'?x:{}}catch(e){return {}}}
-function writePhoto(pid,photo){
-  if(!pid||!photo)return false;
-  try{const m=readPhotoMap();m[String(pid)]=photo;localStorage.setItem(PHOTO_KEY,JSON.stringify(m));return true}catch(e){console.warn('Foto local: falha ao salvar',e);return false}
-}
-function readPhoto(pid){try{return readPhotoMap()[String(pid)]||''}catch(e){return ''}}
-function removePhoto(pid){try{const m=readPhotoMap();delete m[String(pid)];localStorage.setItem(PHOTO_KEY,JSON.stringify(m))}catch(e){}}
-function hydrate(){
-  try{(db.patients||[]).forEach(p=>{if(!p.photo){const ph=readPhoto(p.id);if(ph)p.photo=ph}});}
-  catch(e){}
-}
-function compress17(file){
- return new Promise((resolve,reject)=>{
-  if(!file)return resolve('');
-  const r=new FileReader();
-  r.onerror=()=>reject(Error('Não foi possível ler a foto.'));
-  r.onload=()=>{
-   const im=new Image();
-   im.onerror=()=>reject(Error('Não foi possível processar a foto.'));
-   im.onload=()=>{
-    const max=600, scale=Math.min(1,max/Math.max(im.naturalWidth||im.width,im.naturalHeight||im.height));
-    const w=Math.max(1,Math.round((im.naturalWidth||im.width)*scale)),h=Math.max(1,Math.round((im.naturalHeight||im.height)*scale));
-    const c=document.createElement('canvas');c.width=w;c.height=h;
-    const ctx=c.getContext('2d');ctx.drawImage(im,0,0,w,h);
-    resolve(c.toDataURL('image/jpeg',.68));
-   };
-   im.src=r.result;
-  };
-  r.readAsDataURL(file);
- });
-}
-window.previewPatientPhoto=async function(input){
- const box=$id('pPhotoPreview'),file=input?.files?.[0];
- if(!box)return;
- if(!file){box.innerHTML='';window.__pendingPatientPhoto='';return}
- try{const data=await compress17(file);window.__pendingPatientPhoto=data;box.innerHTML='<img id="v17PrescriptionPhoto" src="'+esc17(data)+'" alt="Foto do paciente"><div class="small muted">Foto pronta para salvar.</div>'}
- catch(e){window.__pendingPatientPhoto='';box.innerHTML='<div class="notice danger">Não foi possível carregar a foto.</div>'}
-};
-
-// Recupera fotos sem depender de IndexedDB (funciona também quando o HTML é aberto localmente).
-hydrate();
-
-const previousSave=window.savePatient;
-if(typeof previousSave==='function'){
- window.savePatient=async function(){
-  const before=new Set((db.patients||[]).map(p=>String(p.id)));
-  const snap={name:$id('pName')?.value||'',internalId:$id('pId')?.value||''};
-  let photo=window.__pendingPatientPhoto||'';
-  const file=$id('pPhoto')?.files?.[0];
-  if(file&&!photo){try{photo=await compress17(file)}catch(e){alert('Não foi possível carregar a foto do paciente.');return}}
-  const result=await Promise.resolve(previousSave.apply(this,arguments));
-  const arr=db.patients||[];
-  let patient=arr.find(p=>!before.has(String(p.id)))||null;
-  if(!patient){
-   const iid=String(snap.internalId).trim(),name=String(snap.name).trim().toLowerCase();
-   patient=arr.slice().reverse().find(p=>(iid&&String(p.internalId||'').trim()===iid)||(name&&String(p.name||'').trim().toLowerCase()===name))||null;
-  }
-  if(!patient)return result;
-  if(photo)patient.photo=photo;
-  if(patient.photo){
-   const ok=writePhoto(patient.id,patient.photo);
-   if(!ok){
-    const msg=$id('patientMsg');if(msg)msg.innerHTML='<div class="notice danger">A foto foi carregada, mas o navegador não permitiu o armazenamento local da foto.</div>';
-   }
-  }
-  const box=$id('pPhotoPreview');
-  if(box&&patient.photo)box.innerHTML='<img id="v17PrescriptionPhoto" src="'+esc17(patient.photo)+'" alt="Foto do paciente"><div class="small muted">Foto cadastrada.</div>';
-  window.__pendingPatientPhoto='';
-  try{if($id('pPhoto'))$id('pPhoto').value='';updateCounts?.();populateSelects?.();renderPatients?.()}catch(e){}
-  // Garante que a atualização da foto seja refletida no fluxo normal de sincronização.
-  try{if(typeof persist==='function')persist();}catch(e){}
-  return result;
- };
-}
-
-async function getPatientPhoto17(pid){
- const p=(db.patients||[]).find(x=>String(x.id)===String(pid));
- let photo=p?.photo||readPhoto(pid);
- if(photo&&p&&!p.photo)p.photo=photo;
- return photo||'';
-}
-function plan17(pid){try{return typeof getTrainingPlan==='function'?getTrainingPlan(pid):((db.trainingPlans||[]).find(x=>String(x.patientId)===String(pid))||null)}catch(e){return null}}
-function escHtml17(v){return esc17(v==null||v===''?'—':v)}
-async function print17(title,kind){
- const pid=String($id('tPatient')?.value||'');
- const p=(db.patients||[]).find(x=>String(x.id)===pid)||null;
- if(!p){alert('Selecione um paciente antes de gerar a ficha de treino.');return}
- const plan=plan17(pid);if(!plan){alert('Este paciente ainda não possui uma prescrição salva. Salve a prescrição antes de gerar a ficha.');return}
- const photo=await getPatientPhoto17(pid);
- if(!photo){alert('Este paciente não possui uma foto cadastrada. Volte ao Cadastro, selecione a foto e salve novamente.');return}
- const logo=$id('tPatient')?document.querySelector('.brand-logo')?.src||'':'';
- let body='<h2>Paciente</h2><div class="patient"><div><b>Paciente</b><span>'+escHtml17(p.name)+'</span></div><div><b>Unidade</b><span>'+escHtml17(p.unit)+'</span></div><div><b>Idade</b><span>'+escHtml17(p.age)+'</span></div></div>';
- if(kind!=='aerobic'){
-  body+='<h2>Treinamento Resistido</h2>';
-  ['A','B','C','D','E'].forEach(w=>{const a=plan.strength?.[w]||[];if(!a.length)return;body+='<h3>Treino '+w+'</h3>';a.forEach(x=>body+='<div class="exercise"><b>'+escHtml17(x.name||'Exercício')+'</b><div>'+escHtml17(x.load)+' kg · '+escHtml17(x.sets)+' séries · '+escHtml17(x.reps)+' repetições · intervalo '+escHtml17(x.interval)+'</div>'+(x.obs?'<div class="obs">'+escHtml17(x.obs)+'</div>':'')+'</div>')});
- }
- if(kind!=='strength'){
-  const a=plan.aerobic||{};body+='<h2>Treinamento Aeróbico</h2><div class="grid">'+[['Modalidade',a.modality],['Frequência',a.frequency],['Duração',a.duration],['Intensidade',a.intensity],['Objetivo',a.objective],['FC-alvo',a.fcTarget]].map(x=>'<div><b>'+escHtml17(x[0])+'</b><span>'+escHtml17(x[1])+'</span></div>').join('')+'</div>';
- }
- const w=window.open('','_blank','width=1000,height=800');
- if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para a plataforma.');return}
- const safePhoto=esc17(photo),safeLogo=esc17(logo);
- const html='<!doctype html><html><head><meta charset="utf-8"><title>'+escHtml17(title)+'</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;font-size:11px}.no-print{margin-bottom:12px}.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}.logo{width:145px;height:58px;object-fit:contain}.patient-photo{display:block;width:100px;height:100px;object-fit:cover;border:1px solid #cfd6da;border-radius:8px;margin-left:auto;flex:0 0 auto}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.patient{display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px}.patient b,.grid b{display:block;font-size:8px;color:#66777e;text-transform:uppercase}.patient span,.grid span{font-weight:700}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.grid>div{border:1px solid #dce5ea;border-radius:6px;padding:7px}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.obs{font-size:9px;color:#4e626b;margin-top:4px}h2{font-size:14px;color:#0753aa;border-bottom:1px solid #dbe5eb;padding-bottom:4px}h3{font-size:12px;color:#0753aa}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}@media print{.no-print{display:none}}</style></head><body><div class="no-print"><button onclick="window.print()">Imprimir / Salvar como PDF</button> <button onclick="window.close()">Fechar</button></div><div class="head">'+(logo?'<img class="logo" src="'+safeLogo+'">':'')+'<img id="patientPhoto" class="patient-photo" src="'+safePhoto+'" alt="Foto do paciente"><div class="title"><h1>Moviment’ Up — Prescrição de Exercício</h1><div>Casa de David — Treinamento Inclusivo</div></div></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David.</div></body></html>';
- w.document.open();w.document.write(html);w.document.close();
- const im=w.document.getElementById('patientPhoto');
- const go=()=>{if(w.__v17Printed)return;w.__v17Printed=true;w.focus();setTimeout(()=>w.print(),300)};
- if(im){if(im.complete&&im.naturalWidth>0)go();else{im.onload=go;im.onerror=()=>alert('A foto foi encontrada, mas o navegador não conseguiu carregá-la na ficha.');setTimeout(()=>{if(im.complete&&im.naturalWidth>0)go()},4000)}}else go();
-}
-window.printStrengthTrainingSheet=()=>print17('Ficha do Treinamento Resistido','strength');
-window.printAerobicTrainingSheet=()=>print17('Ficha do Treinamento Aeróbico','aerobic');
-window.printCompleteTrainingSheet=()=>print17('Ficha Completa de Treino','complete');
-
-// Ao selecionar o paciente na Prescrição, garante que a foto esteja disponível no objeto atual.
-const sel=$id('tPatient');
-if(sel)sel.addEventListener('change',async()=>{const p=(db.patients||[]).find(x=>String(x.id)===String(sel.value));if(p&&!p.photo){const ph=readPhoto(p.id);if(ph)p.photo=ph}setTimeout(()=>sel.classList.remove('photo-loading'),0)});
-setTimeout(hydrate,200);
-})();
-</script>
+</body>
+</html>
