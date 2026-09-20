@@ -6131,7 +6131,48 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
       .logo{max-width:145px;max-height:58px;object-fit:contain}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.title p{margin:0;font-size:10px;color:#566873}
       .patient{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:7px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px;margin-bottom:12px}.patient b{display:block;font-size:9px;color:#66777e;text-transform:uppercase}.patient span{font-weight:700;font-size:11px}
       h2{font-size:14px;color:#0753aa;margin:13px 0 7px;border-bottom:1px solid #dbe5eb;padding-bottom:4px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:8px}.field{border:1px solid #dce5ea;border-radius:6px;padding:7px;min-height:27px}.field b{display:block;font-size:8px;color:#687a83;text-transform:uppercase;margin-bottom:3px}.field span{font-weight:700}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.exercise-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;margin-bottom:6px}.exercise-data{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.mini{background:#f7fafb;border-radius:5px;padding:5px}.mini b{display:block;font-size:8px;color:#687a83}.mini span{font-weight:700}.obs{margin-top:5px;font-size:9px;color:#4e626b}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}.no-print{margin-bottom:12px}@media print{.no-print{display:none}.exercise{break-inside:avoid}}
-    `+'</style></head><body><div class="no-print"><button onclick="window.print()" style="padding:8px 14px;font-weight:700">Imprimir / Salvar como PDF</button><button onclick="window.close()" style="padding:8px 14px;margin-left:6px">Fechar</button></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David. Ficha gerada a partir da prescrição registrada no sistema.</div>
+    `+'</style></head><body><div class="no-print"><button onclick="window.print()" style="padding:8px 14px;font-weight:700">Imprimir / Salvar como PDF</button><button onclick="window.close()" style="padding:8px 14px;margin-left:6px">Fechar</button></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David. Ficha gerada a partir da prescrição registrada no sistema.</div></body></html>');
+    w.document.close();w.focus();
+  }
+  function header(title,p,plan){
+    const prof=plan.professor||'—', date=plan.date?formatDate(plan.date):'—';
+    /* Usa o mesmo logo institucional já exibido na plataforma. Como a ficha é aberta
+       em uma nova janela, o src é copiado para dentro do HTML da impressão. */
+    const logoEl=document.querySelector('.brand-logo')||document.querySelector('.logo img');
+    const logoSrc=logoEl?.src||'';
+    const logoHtml=logoSrc?'<img class="logo" src="'+safe(logoSrc)+'" alt="Casa de David">':'';
+    return '<div class="head">'+logoHtml+'<div class="title"><h1>'+safe(title)+'</h1><p>Moviment’ Up — Casa de David</p></div></div><div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(date)+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(prof)+'</span></div>';
+  }
+  function strengthBody(p,plan,onlyDay){
+    let days=onlyDay?[onlyDay]:['A','B','C','D','E'];
+    let h=header(onlyDay?'FICHA DE TREINO — TREINO '+onlyDay:'FICHA DE TREINAMENTO RESISTIDO',p,plan);
+    if(plan.objectives?.length) h+='<h2>Objetivos</h2><div class="field"><span>'+plan.objectives.map(safe).join(' • ')+'</span></div>';
+    days.forEach(d=>{
+      const arr=plan.strength?.[d]||[];
+      h+='<h2>TREINO '+d+'</h2>';
+      if(!arr.length){h+='<div class="field"><span>Nenhum exercício prescrito.</span></div>';return;}
+      arr.forEach((ex,i)=>{
+        h+='<div class="exercise"><div class="exercise-head"><b>'+((i+1)+'. '+safe(ex.name))+'</b><span>Regulagem: '+safe(ex.reg?.A)+' / '+safe(ex.reg?.F)+' / '+safe(ex.reg?.D)+' / '+safe(ex.reg?.E)+' / '+safe(ex.reg?.B)+'</span></div><div class="exercise-data"><div class="mini"><b>Carga (kg)</b><span>'+safe(ex.load)+'</span></div><div class="mini"><b>Séries</b><span>'+safe(ex.sets)+'</span></div><div class="mini"><b>Repetições</b><span>'+safe(ex.reps)+'</span></div><div class="mini"><b>Intervalo (s)</b><span>'+safe(ex.interval)+'</span></div><div class="mini"><b>Observação</b><span>'+safe(ex.obs)+'</span></div></div></div>';
+      });
+    });
+    return h;
+  }
+  function aerobicBody(p,plan){
+    const a=plan.aerobic||{};
+    let h=header('FICHA DE TREINAMENTO AERÓBICO',p,plan);
+    h+='<h2>Prescrição</h2><div class="grid">'+[
+      ['Modalidade',a.modality],['Frequência semanal',a.frequency!=null?a.frequency+' vezes/semana':null],['Duração',a.duration!=null?a.duration+' min':null],['Intensidade',a.intensity],['Objetivo',a.objective],['FCmáx estimada',a.fcMax],['FC repouso',a.fcRest],['FC reserva',a.fcReserve],['FC-alvo',a.fcTarget],['Velocidade',a.speed!=null?a.speed+' km/h':null],['Distância',a.distance!=null?a.distance+' km':null],['Carga / resistência',a.resistance],['Nível',a.level]
+    ].map(x=>'<div class="field"><b>'+safe(x[0])+'</b><span>'+safe(x[1])+'</span></div>').join('')+'</div>';
+    if((a.functionalParts||[]).length)h+='<div class="field"><b>Treino funcional</b><span>'+a.functionalParts.map(safe).join(' • ')+'</span></div>';
+    if(a.obs)h+='<div class="field" style="margin-top:8px"><b>Observações</b><span>'+safe(a.obs).replace(/\n/g,'<br>')+'</span></div>';
+    return h;
+  }
+  window.printStrengthTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha de Treinamento Resistido',strengthBody(x.p,x.plan));};
+  window.printAerobicTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha de Treinamento Aeróbico',aerobicBody(x.p,x.plan));};
+  window.printCompleteTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha Completa de Treino',strengthBody(x.p,x.plan)+aerobicBody(x.p,x.plan));};
+})();
+</script>
+
 <!-- MOVIMENT UP V19 — PERSISTÊNCIA CENTRAL / ID ÚNICO / RECUPERAÇÃO DE DADOS — PATCH FINAL -->
 <script id="moviment-up-v19-persistence-final">
 (function(){
@@ -6193,6 +6234,9 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
       age:age,
       sex:S('pSex'),
       unit:S('pUnit'),
+      diagnosis:STR(S('pDiag')),
+      diagnosisDetail:STR(S('pDiagDetail')),
+      otherDiagnosis:currentOther,
       supportLevel:S('pSupport'),
       obs:STR(S('pObs')),
       updatedAt:new Date().toISOString()
@@ -6209,18 +6253,28 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
       if(firstDiag) data.diagnosis=firstDiag;
       if(tea?.classification) data.diagnosisDetail=tea.classification;
     }
-    // Nunca apaga um diagnóstico existente só porque o campo compatibilidade está vazio.
-    if(currentOther) data.otherDiagnosis=currentOther;
+    // Nunca apaga dados clínicos existentes só porque um campo compatível
+    // está vazio no formulário.
+    if(!data.diagnosis && existing?.diagnosis) data.diagnosis=existing.diagnosis;
+    if(!data.diagnosisDetail && existing?.diagnosisDetail) data.diagnosisDetail=existing.diagnosisDetail;
+    if(!data.otherDiagnosis && existing?.otherDiagnosis) data.otherDiagnosis=existing.otherDiagnosis;
     return data;
   }
 
   function verifyLocalPersistence(pid){
-    const raw=localStorage.getItem(typeof KEY!=='undefined'?KEY:'');
-    if(!raw)return false;
+    // KEY é uma constante privada do script principal e não é acessível
+    // neste bloco. A V19 usa esta mesma chave para a persistência local.
+    const storageKey='casa_david_moviment_up_v1';
     try{
-      const x=JSON.parse(raw),p=(x.patients||[]).find(q=>q&&String(q.id)===String(pid));
+      const raw=localStorage.getItem(storageKey);
+      if(!raw)return false;
+      const x=JSON.parse(raw);
+      const p=(x.patients||[]).find(q=>q&&!q.deleted&&String(q.id)===String(pid));
       return !!p;
-    }catch(e){return false}
+    }catch(e){
+      console.warn('V19: não foi possível confirmar a persistência local',e);
+      return false;
+    }
   }
 
   // Cadastro: uma única função final, preservando ID e todos os campos existentes.
@@ -6428,42 +6482,6 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   window.addEventListener('pageshow',()=>setTimeout(refreshPatientAges,80));
 })();
 </script>
-</body></html>');
-    w.document.close();w.focus();
-  }
-  function header(title,p,plan){
-    const prof=plan.professor||'—', date=plan.date?formatDate(plan.date):'—';
-    return '<div class="head"><div class="title"><h1>'+safe(title)+'</h1><p>Moviment’ Up — Casa de David</p></div></div><div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(date)+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(prof)+'</span></div>';
-  }
-  function strengthBody(p,plan,onlyDay){
-    let days=onlyDay?[onlyDay]:['A','B','C','D','E'];
-    let h=header(onlyDay?'FICHA DE TREINO — TREINO '+onlyDay:'FICHA DE TREINAMENTO RESISTIDO',p,plan);
-    if(plan.objectives?.length) h+='<h2>Objetivos</h2><div class="field"><span>'+plan.objectives.map(safe).join(' • ')+'</span></div>';
-    days.forEach(d=>{
-      const arr=plan.strength?.[d]||[];
-      h+='<h2>TREINO '+d+'</h2>';
-      if(!arr.length){h+='<div class="field"><span>Nenhum exercício prescrito.</span></div>';return;}
-      arr.forEach((ex,i)=>{
-        h+='<div class="exercise"><div class="exercise-head"><b>'+((i+1)+'. '+safe(ex.name))+'</b><span>Regulagem: '+safe(ex.reg?.A)+' / '+safe(ex.reg?.F)+' / '+safe(ex.reg?.D)+' / '+safe(ex.reg?.E)+' / '+safe(ex.reg?.B)+'</span></div><div class="exercise-data"><div class="mini"><b>Carga (kg)</b><span>'+safe(ex.load)+'</span></div><div class="mini"><b>Séries</b><span>'+safe(ex.sets)+'</span></div><div class="mini"><b>Repetições</b><span>'+safe(ex.reps)+'</span></div><div class="mini"><b>Intervalo (s)</b><span>'+safe(ex.interval)+'</span></div><div class="mini"><b>Observação</b><span>'+safe(ex.obs)+'</span></div></div></div>';
-      });
-    });
-    return h;
-  }
-  function aerobicBody(p,plan){
-    const a=plan.aerobic||{};
-    let h=header('FICHA DE TREINAMENTO AERÓBICO',p,plan);
-    h+='<h2>Prescrição</h2><div class="grid">'+[
-      ['Modalidade',a.modality],['Frequência semanal',a.frequency!=null?a.frequency+' vezes/semana':null],['Duração',a.duration!=null?a.duration+' min':null],['Intensidade',a.intensity],['Objetivo',a.objective],['FCmáx estimada',a.fcMax],['FC repouso',a.fcRest],['FC reserva',a.fcReserve],['FC-alvo',a.fcTarget],['Velocidade',a.speed!=null?a.speed+' km/h':null],['Distância',a.distance!=null?a.distance+' km':null],['Carga / resistência',a.resistance],['Nível',a.level]
-    ].map(x=>'<div class="field"><b>'+safe(x[0])+'</b><span>'+safe(x[1])+'</span></div>').join('')+'</div>';
-    if((a.functionalParts||[]).length)h+='<div class="field"><b>Treino funcional</b><span>'+a.functionalParts.map(safe).join(' • ')+'</span></div>';
-    if(a.obs)h+='<div class="field" style="margin-top:8px"><b>Observações</b><span>'+safe(a.obs).replace(/\n/g,'<br>')+'</span></div>';
-    return h;
-  }
-  window.printStrengthTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha de Treinamento Resistido',strengthBody(x.p,x.plan));};
-  window.printAerobicTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha de Treinamento Aeróbico',aerobicBody(x.p,x.plan));};
-  window.printCompleteTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha Completa de Treino',strengthBody(x.p,x.plan)+aerobicBody(x.p,x.plan));};
-})();
-</script>
 
 
 
@@ -6637,6 +6655,19 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   }else{
     setTimeout(function(){wireAge();wireDeleteButtons();auditButtons();},0);
   }
+})();
+</script>
+<script id="moviment-up-v19-integrity-check">
+(function(){
+  // Diagnóstico silencioso: se algum navegador receber uma versão com o
+  // código-fonte do módulo de fichas no BODY, registra no console em vez de
+  // alterar ou apagar dados do usuário. A versão correta nunca deve disparar.
+  try{
+    const t=document.body?.innerText||'';
+    if(/function\s+(header|strengthBody|aerobicBody)\s*\(/.test(t)){
+      console.error('Moviment Up V19: código de geração de ficha apareceu como texto no BODY. Verificar publicação do HTML.');
+    }
+  }catch(e){}
 })();
 </script>
 </body>
