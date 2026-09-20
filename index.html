@@ -6131,7 +6131,304 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
       .logo{max-width:145px;max-height:58px;object-fit:contain}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.title p{margin:0;font-size:10px;color:#566873}
       .patient{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:7px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px;margin-bottom:12px}.patient b{display:block;font-size:9px;color:#66777e;text-transform:uppercase}.patient span{font-weight:700;font-size:11px}
       h2{font-size:14px;color:#0753aa;margin:13px 0 7px;border-bottom:1px solid #dbe5eb;padding-bottom:4px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:8px}.field{border:1px solid #dce5ea;border-radius:6px;padding:7px;min-height:27px}.field b{display:block;font-size:8px;color:#687a83;text-transform:uppercase;margin-bottom:3px}.field span{font-weight:700}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.exercise-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;margin-bottom:6px}.exercise-data{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.mini{background:#f7fafb;border-radius:5px;padding:5px}.mini b{display:block;font-size:8px;color:#687a83}.mini span{font-weight:700}.obs{margin-top:5px;font-size:9px;color:#4e626b}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}.no-print{margin-bottom:12px}@media print{.no-print{display:none}.exercise{break-inside:avoid}}
-    `+'</style></head><body><div class="no-print"><button onclick="window.print()" style="padding:8px 14px;font-weight:700">Imprimir / Salvar como PDF</button><button onclick="window.close()" style="padding:8px 14px;margin-left:6px">Fechar</button></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David. Ficha gerada a partir da prescrição registrada no sistema.</div></body></html>');
+    `+'</style></head><body><div class="no-print"><button onclick="window.print()" style="padding:8px 14px;font-weight:700">Imprimir / Salvar como PDF</button><button onclick="window.close()" style="padding:8px 14px;margin-left:6px">Fechar</button></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David. Ficha gerada a partir da prescrição registrada no sistema.</div>
+<!-- MOVIMENT UP V19 — PERSISTÊNCIA CENTRAL / ID ÚNICO / RECUPERAÇÃO DE DADOS — PATCH FINAL -->
+<script id="moviment-up-v19-persistence-final">
+(function(){
+  'use strict';
+  const $=id=>document.getElementById(id);
+  const S=id=>$(id)?.value??'';
+  const SV=(id,v)=>{if($(id))$(id).value=v??''};
+  const STR=v=>String(v??'').trim();
+  const NUM=v=>{const n=parseFloat(v);return Number.isFinite(n)?n:null};
+  const ageFromBirth=v=>{
+    if(typeof calcAgeFromBirth==='function') return calcAgeFromBirth(v);
+    if(!v)return null;
+    const b=new Date(String(v)+'T00:00:00'), t=new Date();
+    if(Number.isNaN(b.getTime()))return null;
+    let a=t.getFullYear()-b.getFullYear();
+    if(t.getMonth()<b.getMonth() || (t.getMonth()===b.getMonth()&&t.getDate()<b.getDate()))a--;
+    return a>=0?a:null;
+  };
+  const pById=pid=>(window.db?.patients||[]).find(p=>p&&!p.deleted&&String(p.id)===String(pid))||null;
+  const uniq=a=>[...new Set((a||[]).filter(Boolean))];
+  const recName=x=>typeof x==='string'?x:STR(x?.name);
+  const recNorm=x=>typeof x==='string'?{name:STR(x),classification:''}:{name:STR(x?.name),classification:STR(x?.classification)};
+  const mergeArr=(a,b)=>{const out=[...(Array.isArray(a)?a:[])];const seen=new Set(out.map(x=>JSON.stringify(x)));(Array.isArray(b)?b:[]).forEach(x=>{const k=JSON.stringify(x);if(!seen.has(k)){out.push(x);seen.add(k)}});return out};
+
+  function refreshPatientAges(){
+    let changed=false;
+    (window.db?.patients||[]).forEach(p=>{
+      if(!p||p.deleted)return;
+      const a=ageFromBirth(p.birth);
+      if(a!=null && Number(p.age)!==Number(a)){p.age=a;changed=true}
+      if(a==null && p.age!=null && STR(p.birth)===''){/* preserve legacy manually stored age when birth is absent */}
+    });
+    if(changed && typeof persist==='function')persist();
+    const a=S('pBirth');if(a)SV('pAge',ageFromBirth(a)!=null?ageFromBirth(a)+' anos':'');
+  }
+
+  function collectClinical(existing){
+    let functional=mergeArr(existing?.functionalConditions,window.__functionalRecords);
+    let diagnoses=mergeArr(existing?.diagnosisRecords,window.__diagnosisRecords);
+    try{
+      if(typeof selectedClinicalValues==='function'){
+        const c=selectedClinicalValues()||{};
+        if(Array.isArray(c.deficiency)) functional=mergeArr(functional,c.deficiency.map(x=>({name:x,classification:''})));
+        if(Array.isArray(c.diagnoses)) diagnoses=mergeArr(diagnoses,c.diagnoses.map(x=>({name:typeof x==='string'?x:x?.name,classification:typeof x==='string'?'':x?.classification||''})));
+      }
+    }catch(e){console.warn('V19: leitura clínica preservada sem interrupção',e)}
+    return {functional:functional.map(recNorm).filter(x=>x.name),diagnoses:diagnoses.map(recNorm).filter(x=>x.name)};
+  }
+
+  function patientFormData(existing){
+    const c=collectClinical(existing);
+    const birth=S('pBirth');
+    const age=ageFromBirth(birth);
+    const currentOther=STR(S('pOtherDiag'));
+    const data={
+      name:STR(S('pName')),
+      internalId:STR(S('pId')),
+      birth:birth,
+      age:age,
+      sex:S('pSex'),
+      unit:S('pUnit'),
+      supportLevel:S('pSupport'),
+      obs:STR(S('pObs')),
+      updatedAt:new Date().toISOString()
+    };
+    // Só substitui campos clínicos quando a interface realmente tem conteúdo;
+    // campos antigos/estruturas desconhecidas permanecem intactos.
+    if(c.functional.length || c.diagnoses.length || !existing){
+      data.functionalConditions=c.functional;
+      data.diagnosisRecords=c.diagnoses;
+      data.deficiency=uniq(c.functional.map(x=>x.name));
+      data.diagnoses=uniq(c.diagnoses.map(x=>x.name));
+      const tea=c.functional.find(x=>x.name==='Autismo / TEA');
+      const firstDiag=c.diagnoses[0]?.name||c.functional[0]?.name||'';
+      if(firstDiag) data.diagnosis=firstDiag;
+      if(tea?.classification) data.diagnosisDetail=tea.classification;
+    }
+    // Nunca apaga um diagnóstico existente só porque o campo compatibilidade está vazio.
+    if(currentOther) data.otherDiagnosis=currentOther;
+    return data;
+  }
+
+  function verifyLocalPersistence(pid){
+    const raw=localStorage.getItem(typeof KEY!=='undefined'?KEY:'');
+    if(!raw)return false;
+    try{
+      const x=JSON.parse(raw),p=(x.patients||[]).find(q=>q&&String(q.id)===String(pid));
+      return !!p;
+    }catch(e){return false}
+  }
+
+  // Cadastro: uma única função final, preservando ID e todos os campos existentes.
+  window.savePatient=function(){
+    const name=STR(S('pName'));
+    if(!name){if($('patientMsg'))$('patientMsg').innerHTML='<div class="notice danger">Informe o nome do paciente.</div>';$('pName')?.focus();return;}
+    const editId=(typeof currentPatientEditId!=='undefined'&&currentPatientEditId)?String(currentPatientEditId):'';
+    const existing=editId?pById(editId):null;
+    const data=patientFormData(existing);
+    let p;
+    if(existing){
+      // Atualização seletiva: valores vazios do formulário não apagam dados existentes.
+      Object.keys(data).forEach(k=>{
+        const v=data[k];
+        if(Array.isArray(v)){ if(v.length)existing[k]=v; else if(!Array.isArray(existing[k]))existing[k]=[]; }
+        else if(k==='age'){ if(v!=null)existing.age=v; else if(existing.age==null)existing.age=ageFromBirth(existing.birth); }
+        else if(k==='updatedAt'){existing.updatedAt=v;}
+        else if(v!==null && v!==undefined && STR(v)!=='')existing[k]=v;
+      });
+      if(!existing.id)existing.id=editId;
+      p=existing;
+    }else{
+      p={id:(typeof uid==='function'?uid('p'):'p_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8)),...data,createdAt:new Date().toISOString()};
+      window.db.patients.push(p);
+    }
+    if(typeof consolidateDuplicatePatients==='function')consolidateDuplicatePatients();
+    if(typeof persist==='function'&&!persist())return;
+    // Releitura real do armazenamento antes de confirmar ao usuário.
+    const persisted=verifyLocalPersistence(p.id);
+    if(!persisted){
+      if(!existing)window.db.patients=window.db.patients.filter(x=>String(x.id)!==String(p.id));
+      if($('patientMsg'))$('patientMsg').innerHTML='<div class="notice danger">Os dados não puderam ser confirmados no armazenamento local. Nenhuma alteração foi confirmada.</div>';
+      return;
+    }
+    if(typeof populateSelects==='function')populateSelects();
+    if(typeof renderPatients==='function')renderPatients();
+    if(typeof updateCounts==='function')updateCounts();
+    if(typeof calcPatientAge==='function')calcPatientAge();
+    if($('patientMsg'))$('patientMsg').innerHTML='<div class="notice success">'+(existing?'Paciente atualizado':'Paciente salvo')+' com sucesso. Todos os dados foram preservados no mesmo ID.</div>';
+    if(typeof currentPatientEditId!=='undefined')currentPatientEditId=String(p.id);
+    // Sincronização já existente da V19 detectará o paciente pelo ID/updatedAt.
+    if(typeof window.__movimentUpSetStatus==='function' && navigator.onLine)window.__movimentUpSetStatus('syncing','ONLINE • cadastro salvo; sincronizando...');
+  };
+
+  window.editPatientClinical=function(pid){
+    const p=pById(pid);if(!p)return;
+    if(typeof currentPatientEditId!=='undefined')currentPatientEditId=String(p.id);
+    SV('pName',p.name);SV('pId',p.internalId||'');SV('pBirth',p.birth||'');
+    const age=ageFromBirth(p.birth);
+    SV('pAge',age!=null?age+' anos':(p.age!=null?p.age+' anos':''));
+    SV('pSex',p.sex||'');SV('pUnit',p.unit||'');SV('pSupport',p.supportLevel||'');SV('pObs',p.obs||'');
+    // Compatibilidade com diagnóstico antigo.
+    SV('pDiag',p.diagnosis||'');SV('pDiagDetail',p.diagnosisDetail||'');SV('pOtherDiag',p.otherDiagnosis||'');
+    if(typeof normalizePatientClinical==='function'){
+      const c=normalizePatientClinical(p)||{functional:[],diagnoses:[]};
+      window.__functionalRecords=(c.functional||[]).map(recNorm);
+      window.__diagnosisRecords=(c.diagnoses||[]).map(recNorm);
+    }else{
+      window.__functionalRecords=(p.functionalConditions||p.deficiency||[]).map(recNorm);
+      window.__diagnosisRecords=(p.diagnosisRecords||p.diagnoses||[]).map(recNorm);
+    }
+    try{if(typeof setClinicalFromPatient==='function')setClinicalFromPatient(p)}catch(e){}
+    if(typeof renderClinicalForm==='function')renderClinicalForm();
+    if(typeof updateDiagnosisOptions==='function')updateDiagnosisOptions();
+    if($('patientMsg'))$('patientMsg').innerHTML='<div class="notice">Editando cadastro de '+(typeof esc==='function'?esc(p.name):p.name)+'. Todos os dados existentes foram carregados.</div>';
+    if(typeof show==='function')show('patients');
+    setTimeout(()=>{SV('pAge',ageFromBirth(p.birth)!=null?ageFromBirth(p.birth)+' anos':'');},0);
+    window.scrollTo({top:0,behavior:'smooth'});
+  };
+
+  // Seleção central: todos os módulos recebem o mesmo objeto pelo ID.
+  window.getPatientByIdV19=pid=>pById(pid);
+  window.getActivePatientV19=()=>{
+    const ids=[S('aPatient'),S('rPatient'),S('tPatient'),S('sPatient'),S('hPatient')];
+    const active=ids.find(Boolean)||window.activePatientId||'';
+    return pById(active);
+  };
+
+  function renderAssessmentIdentityFull(){
+    const pid=S('aPatient');const p=pById(pid);const host=$('assessmentPatientIdentity');
+    if(!host||!p)return;
+    const age=ageFromBirth(p.birth);const diagnoses=uniq([...(p.diagnoses||[]),...(p.deficiency||[]),p.diagnosis,p.otherDiagnosis].map(STR)).filter(Boolean);
+    host.querySelector('.identity-note')?.replaceChildren(document.createTextNode('Dados puxados automaticamente do CADASTRO DO PACIENTE. O mesmo ID é utilizado em todas as avaliações e relatórios.'));
+    let grid=host.querySelector('.identity-grid');
+    if(!grid){grid=document.createElement('div');grid.className='identity-grid';host.prepend(grid)}
+    grid.innerHTML=`<button type="button" class="identity-btn"><span>Nome completo</span><strong>${typeof esc==='function'?esc(p.name):p.name}</strong></button>
+      <button type="button" class="identity-btn"><span>Data de nascimento / Idade</span><strong>${p.birth?(typeof formatDate==='function'?formatDate(p.birth):p.birth):'—'} / ${age!=null?age+' anos':'—'}</strong></button>
+      <button type="button" class="identity-btn"><span>Sexo / Unidade</span><strong>${typeof esc==='function'?esc(p.sex||'—'):'—'} / ${typeof esc==='function'?esc(p.unit||'—'):'—'}</strong></button>
+      <button type="button" class="identity-btn"><span>Diagnóstico</span><strong>${typeof esc==='function'?esc(diagnoses.join(', ')||'Não informado'):(diagnoses.join(', ')||'Não informado')}</strong></button>`;
+    const alert=$('assessmentIdentityAlert');if(alert)alert.textContent='';
+  }
+
+  function wirePatientSelectors(){
+    ['aPatient','rPatient','tPatient','sPatient','hPatient'].forEach(id=>{
+      const el=$(id);if(!el||el.dataset.v19central==='1')return;
+      el.dataset.v19central='1';
+      el.addEventListener('change',()=>{
+        const pid=el.value;
+        if(pid&&pById(pid)){
+          window.activePatientId=String(pid);
+          try{localStorage.setItem('casa_david_moviment_up_active_patient_v1',String(pid))}catch(e){}
+        }
+        if(id==='aPatient'){
+          if(typeof refreshAssessmentPatientIdentity==='function')refreshAssessmentPatientIdentity();
+          renderAssessmentIdentityFull();
+          if(typeof calcCardioFC==='function')calcCardioFC();
+        }
+      });
+    });
+  }
+
+  const baseShow=window.show;
+  window.show=function(id){
+    if(typeof baseShow==='function')baseShow(id);
+    setTimeout(()=>{
+      wirePatientSelectors();
+      refreshPatientAges();
+      if(id==='assessment'){
+        const pid=S('aPatient')||window.activePatientId||'';
+        if(pid&&pById(pid)){
+          SV('aPatient',String(pid));
+          if(typeof refreshAssessmentPatientIdentity==='function')refreshAssessmentPatientIdentity();
+          renderAssessmentIdentityFull();
+          if(typeof calcCardioFC==='function')calcCardioFC();
+        }
+      }
+      if(id==='report'&&typeof renderReport==='function')renderReport();
+    },40);
+  };
+
+  // Avaliação: garante snapshot completo sem criar outro paciente.
+  const baseSaveAssessment=window.saveAssessment;
+  window.saveAssessment=function(){
+    const pid=S('aPatient'),p=pById(pid);
+    if(!p){alert('Selecione um paciente cadastrado.');return;}
+    if(typeof baseSaveAssessment==='function')baseSaveAssessment();
+    const list=window.db?.assessments||[];
+    const id=typeof currentAssessmentId!=='undefined'?currentAssessmentId:null;
+    let a=id?list.find(x=>String(x.id)===String(id)):null;
+    if(!a)a=list.slice().reverse().find(x=>String(x.patientId)===String(pid)&&String(x.date||'')===String(S('aDate')||''));
+    if(a){
+      a.patientId=String(p.id);
+      a.patientSnapshot={...(a.patientSnapshot||{}),id:String(p.id),name:p.name||'',birth:p.birth||'',age:ageFromBirth(p.birth),sex:p.sex||'',unit:p.unit||'',supportLevel:p.supportLevel||'',diagnosis:p.diagnosis||'',diagnosisDetail:p.diagnosisDetail||'',otherDiagnosis:p.otherDiagnosis||'',diagnoses:uniq([...(p.diagnoses||[]),...(p.deficiency||[])])};
+      if(typeof persist==='function')persist();
+    }
+    renderAssessmentIdentityFull();
+  };
+
+  const baseEditAssessment=window.editAssessment;
+  window.editAssessment=function(id){
+    if(typeof baseEditAssessment==='function')baseEditAssessment(id);
+    const a=(window.db?.assessments||[]).find(x=>String(x.id)===String(id));
+    const p=a?pById(a.patientId):null;
+    if(p){window.activePatientId=String(p.id);SV('aPatient',String(p.id));setTimeout(renderAssessmentIdentityFull,20);}
+  };
+
+  // Cardiorrespiratória: nunca usa nome como chave.
+  const baseCardio=window.calcCardioFC;
+  window.calcCardioFC=function(){
+    const pid=S('aPatient'),p=pById(pid);
+    if(!p){
+      const z=$('fcZonesTable');if(z)z.innerHTML='<div class="notice">Selecione um paciente cadastrado para iniciar a avaliação cardiorrespiratória.</div>';
+      return;
+    }
+    if(typeof refreshAssessmentPatientIdentity==='function')refreshAssessmentPatientIdentity();
+    renderAssessmentIdentityFull();
+    if(typeof baseCardio==='function')return baseCardio();
+  };
+
+  // Relatório/PDF: reconstrói a identificação a partir do paciente central e inclui todos os dados existentes.
+  const baseReport=window.renderReport;
+  window.renderReport=function(){
+    if(typeof baseReport==='function')baseReport();
+    const sel=$('rPatient');const pid=sel?.value||window.activePatientId||'';const p=pById(pid);const out=$('reportContent');
+    if(!out||!p)return;
+    const as=(window.db?.assessments||[]).filter(a=>String(a.patientId)===String(p.id)).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+    const last=as.at(-1);const age=ageFromBirth(p.birth);const diag=uniq([...(p.diagnoses||[]),...(p.deficiency||[]),p.diagnosis,p.otherDiagnosis].map(STR)).filter(Boolean);
+    const escv=v=>typeof esc==='function'?esc(v??'—'):String(v??'—');
+    let central=out.querySelector('.v19-central-patient-data');
+    if(!central){central=document.createElement('div');central.className='card v19-central-patient-data';out.prepend(central)}
+    central.innerHTML=`<h3>DADOS DO PACIENTE — CADASTRO CENTRAL</h3><div class="report-meta">
+      <p><b>Nome completo:</b> ${escv(p.name)}</p><p><b>Data de nascimento:</b> ${p.birth?(typeof formatDate==='function'?formatDate(p.birth):escv(p.birth)):'—'}</p>
+      <p><b>Idade:</b> ${age!=null?age+' anos':'—'}</p><p><b>Sexo:</b> ${escv(p.sex)}</p><p><b>Unidade:</b> ${escv(p.unit)}</p><p><b>Nível de apoio:</b> ${escv(p.supportLevel)}</p>
+      <p><b>Diagnósticos/condições:</b> ${escv(diag.join('; ')||'Não informado')}</p><p><b>Observações:</b> ${escv(p.obs)}</p></div>`;
+    let ev=out.querySelector('.v19-all-evaluations');
+    if(!ev){ev=document.createElement('div');ev.className='card v19-all-evaluations';out.appendChild(ev)}
+    if(!as.length){ev.innerHTML='<h3>AVALIAÇÕES</h3><p>Nenhuma avaliação registrada para este paciente.</p>'}
+    else ev.innerHTML='<h3>AVALIAÇÕES REGISTRADAS</h3><table><tr><th>Data</th><th>IMC</th><th>ICQ</th><th>TUG</th><th>Sentar/Levantar</th><th>Handgrip D/E</th><th>Wells</th><th>VO₂máx</th><th>FCmáx</th></tr>'+as.map(a=>`<tr><td>${typeof formatDate==='function'?formatDate(a.date):escv(a.date)}</td><td>${a.anthropometry?.bmi??'—'}</td><td>${a.anthropometry?.whr??'—'}</td><td>${a.tests?.tug??'—'}</td><td>${a.tests?.sitStand??'—'}</td><td>${a.tests?.gripR??'—'} / ${a.tests?.gripL??'—'}</td><td>${a.tests?.wells??'—'}</td><td>${a.cardio?.vo2??'—'}</td><td>${a.cardio?.fcMaxCalc??'—'}</td></tr>`).join('')+'</table>';
+    // Atualiza o relatório após a montagem, sem substituir a estrutura de treinamento existente.
+    if(last){
+      let details=out.querySelector('.v19-latest-details');if(!details){details=document.createElement('div');details.className='card v19-latest-details';out.appendChild(details)}
+      details.innerHTML=`<h3>DADOS DA AVALIAÇÃO MAIS RECENTE</h3><table><tr><th>Item</th><th>Resultado</th></tr>
+      <tr><td>Anamnese / condições</td><td>${escv(last.anamnese?.conditions)}</td></tr><tr><td>Medicamentos</td><td>${escv(last.anamnese?.meds)}</td></tr><tr><td>Histórico</td><td>${escv(last.anamnese?.history)}</td></tr><tr><td>Limitações</td><td>${escv(last.anamnese?.limits)}</td></tr>
+      <tr><td>Peso / Altura</td><td>${escv(last.anthropometry?.weight)} kg / ${escv(last.anthropometry?.height)} cm</td></tr><tr><td>Observações antropométricas</td><td>${escv(last.anthropometry?.obs)}</td></tr><tr><td>Observações funcionais</td><td>${escv(last.tests?.obs)}</td></tr>
+      <tr><td>Observações gerais</td><td>${escv(last.general)}</td></tr><tr><td>FC repouso / FC máxima observada</td><td>${escv(last.cardio?.fcRest)} / ${escv(last.cardio?.fcMaxObs)}</td></tr><tr><td>FC-alvo</td><td>${escv(last.cardio?.fcTarget)}</td></tr></table>`;
+    }
+  };
+
+  // Corrige pacientes antigos que tenham idade gravada, e mantém tudo centralizado.
+  document.addEventListener('DOMContentLoaded',()=>{
+    setTimeout(()=>{
+      try{refreshPatientAges();wirePatientSelectors();if(typeof renderPatients==='function')renderPatients();}catch(e){console.warn('V19 repair init',e)}
+    },120);
+  });
+  window.addEventListener('pageshow',()=>setTimeout(refreshPatientAges,80));
+})();
+</script>
+</body></html>');
     w.document.close();w.focus();
   }
   function header(title,p,plan){
