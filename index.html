@@ -2373,205 +2373,37 @@ document.getElementById('patientAssessmentsModal')?.addEventListener('click',e=>
   };
   window.addCustomDiagnosisNew=function(){const n=val('pCustomDiagnosisNew').trim();if(!n){alert('Digite o diagnóstico/condição.');return}addDiagnosisNew(n);setv('pCustomDiagnosisNew','')};
 
-  /* ============================================================
-     PERSISTÊNCIA CENTRAL DO CADASTRO — CORREÇÃO DEFINITIVA
-     Um paciente = um único ID. Editar nunca cria outro registro.
-     Campos existentes nunca são substituídos por vazio/undefined.
-     ============================================================ */
-  function patientStorageKey(){return 'casa_david_moviment_up_v1';}
-  function verifyPatientPersistence(pid){
-    try{
-      const raw=localStorage.getItem(patientStorageKey());
-      if(!raw)return false;
-      const stored=JSON.parse(raw);
-      return !!(stored&&Array.isArray(stored.patients)&&stored.patients.some(x=>x&&!x.deleted&&String(x.id)===String(pid)));
-    }catch(err){console.warn('Moviment Up: verificação local falhou',err);return false;}
-  }
-  function nonEmpty(v){
-    return !(v==null || (typeof v==='string' && v.trim()==='') || (Array.isArray(v)&&v.length===0));
-  }
-  function setExistingField(obj,key,value){
-    if(nonEmpty(value))obj[key]=value;
-  }
-  function getCurrentEditId(){
-    return window.__movimentUpCurrentPatientEditId || currentPatientEditId || null;
-  }
-
+  const originalSavePatient=window.savePatient;
   window.savePatient=function(){
-    const name=val('pName').trim();
-    if(!name){
-      e('patientMsg').innerHTML='<div class="notice danger">Informe o nome do paciente.</div>';
-      e('pName').focus();
-      return false;
-    }
-
-    const editId=getCurrentEditId();
-    const existing=editId?(db.patients||[]).find(x=>String(x.id)===String(editId)):null;
-    const birth=val('pBirth').trim();
-    const age=birth&&typeof calcAgeFromBirth==='function'?calcAgeFromBirth(birth):null;
-    const functional=(window.__functionalRecords||[]).map(normalizeRecord).filter(x=>x.name);
-    const diagnoses=(window.__diagnosisRecords||[]).map(normalizeRecord).filter(x=>x.name);
+    const name=val('pName').trim(); if(!name){e('patientMsg').innerHTML='<div class="notice danger">Informe o nome do paciente.</div>';e('pName').focus();return}
+    const existing=currentPatientEditId?db.patients.find(x=>x.id===currentPatientEditId):null;
+    const functional=(window.__functionalRecords||[]).map(normalizeRecord);
+    const diagnoses=(window.__diagnosisRecords||[]).map(normalizeRecord);
     const tea=functional.find(x=>x.name==='Autismo / TEA');
-    const legacyDiagnosis=val('pDiag').trim();
-    const legacyDetail=val('pDiagDetail').trim();
-    const otherDiagnosis=val('pOtherDiag').trim();
-    const nowIso=new Date().toISOString();
-
-    if(existing){
-      /* UPDATE seletivo: só grava valores realmente informados.
-         Todo campo já existente permanece intacto quando o formulário
-         estiver vazio. */
-      setExistingField(existing,'name',name);
-      setExistingField(existing,'internalId',val('pId').trim());
-      setExistingField(existing,'birth',birth);
-      if(age!=null)existing.age=age;
-      else if(existing.age==null && existing.birth && typeof calcAgeFromBirth==='function'){
-        const oldAge=calcAgeFromBirth(existing.birth);
-        if(oldAge!=null)existing.age=oldAge;
-      }
-      setExistingField(existing,'sex',val('pSex').trim());
-      setExistingField(existing,'unit',val('pUnit').trim());
-      setExistingField(existing,'supportLevel',val('pSupport').trim());
-      setExistingField(existing,'obs',val('pObs').trim());
-
-      if(functional.length){
-        existing.functionalConditions=functional;
-        existing.deficiency=functional.map(x=>x.name);
-      }
-      if(diagnoses.length){
-        existing.diagnosisRecords=diagnoses;
-        existing.diagnoses=diagnoses.map(x=>x.name);
-        if(!existing.diagnosis)existing.diagnosis=diagnoses[0].name;
-        else if(legacyDiagnosis)existing.diagnosis=legacyDiagnosis;
-        if(legacyDetail)existing.diagnosisDetail=legacyDetail;
-      }else if(legacyDiagnosis){
-        existing.diagnosis=legacyDiagnosis;
-        if(legacyDetail)existing.diagnosisDetail=legacyDetail;
-      }
-      if(tea?.classification)existing.diagnosisDetail=tea.classification;
-      if(otherDiagnosis)existing.otherDiagnosis=otherDiagnosis;
-      existing.updatedAt=nowIso;
-      if(!existing.createdAt)existing.createdAt=nowIso;
-      currentPatientEditId=String(existing.id);
-      window.__movimentUpCurrentPatientEditId=String(existing.id);
-    }else{
-      const id=uid('p');
-      const p={
-        id,
-        name,
-        internalId:val('pId').trim(),
-        birth,
-        age,
-        sex:val('pSex').trim(),
-        unit:val('pUnit').trim(),
-        supportLevel:val('pSupport').trim(),
-        obs:val('pObs').trim(),
-        functionalConditions:functional,
-        diagnosisRecords:diagnoses,
-        deficiency:functional.map(x=>x.name),
-        diagnoses:diagnoses.map(x=>x.name),
-        diagnosis:legacyDiagnosis || diagnoses[0]?.name || functional[0]?.name || '',
-        diagnosisDetail:tea?.classification || legacyDetail || functional[0]?.classification || '',
-        otherDiagnosis,
-        createdAt:nowIso,
-        updatedAt:nowIso
-      };
-      db.patients.push(p);
-      currentPatientEditId=String(id);
-      window.__movimentUpCurrentPatientEditId=String(id);
-    }
-
-    if(!persist()){
-      return false;
-    }
-
-    const saved=(db.patients||[]).find(x=>String(x.id)===String(getCurrentEditId()||currentPatientEditId));
-    const pid=saved?.id||currentPatientEditId;
-    if(!pid || !verifyPatientPersistence(pid)){
-      e('patientMsg').innerHTML='<div class="notice danger">O cadastro não pôde ser confirmado no armazenamento local. Os dados não foram considerados salvos.</div>';
-      return false;
-    }
-
-    e('patientMsg').innerHTML='<div class="notice success">'+(existing?'Paciente atualizado com sucesso.':'Paciente salvo com sucesso.')+' Todos os dados preenchidos foram preservados no mesmo ID.</div>';
-    try{renderPatientsEnhanced();}catch(err){try{renderPatients();}catch(_){}}
-    try{populateSelects();}catch(_){}
-    try{window.refreshAssessmentPatientIdentity?.();}catch(_){}
-    return true;
+    const data={
+      name,internalId:val('pId').trim(),birth:val('pBirth'),age:calcAgeFromBirth(val('pBirth')),sex:val('pSex'),unit:val('pUnit'),supportLevel:val('pSupport'),obs:val('pObs').trim(),
+      functionalConditions:functional,diagnosisRecords:diagnoses,deficiency:functional.map(x=>x.name),diagnoses:diagnoses.map(x=>x.name),
+      diagnosis:diagnoses[0]?.name||functional[0]?.name||'',diagnosisDetail:tea?.classification||functional[0]?.classification||'',otherDiagnosis:'',
+      updatedAt:new Date().toISOString()
+    };
+    if(existing){Object.assign(existing,data); if(!existing.createdAt)existing.createdAt=new Date().toISOString();}
+    else db.patients.push({id:uid('p'),...data,createdAt:new Date().toISOString()});
+    if(!persist())return;
+    const msg=existing?'Paciente atualizado com sucesso.':'Paciente salvo com sucesso.';
+    e('patientMsg').innerHTML='<div class="notice success">'+msg+' As condições e diagnósticos permanecem vinculados ao paciente.</div>';
+    currentPatientEditId=existing?.id||null; renderPatientsEnhanced(); populateSelects();
   };
-
   window.editPatientClinical=function(pid){
-    const id=String(pid||'');
-    const p=(db.patients||[]).find(x=>x&&!x.deleted&&String(x.id)===id);
-    if(!p){
-      alert('Paciente não encontrado pelo ID cadastrado.');
-      return false;
-    }
-    currentPatientEditId=id;
-    window.__movimentUpCurrentPatientEditId=id;
-
-    /* Preenche TODOS os campos centrais do cadastro. */
-    setv('pName',p.name||'');
-    setv('pId',p.internalId||'');
-    setv('pBirth',p.birth||'');
-    const age=(p.birth&&typeof calcAgeFromBirth==='function')?calcAgeFromBirth(p.birth):(p.age!=null?p.age:null);
-    setv('pAge',age!=null?age+' anos':'');
-    setv('pSex',p.sex||'');
-    setv('pUnit',p.unit||p.unidade||'');
-    setv('pSupport',p.supportLevel||'');
-    setv('pObs',p.obs||'');
-    setv('pDiag',p.diagnosis||'');
-    setv('pDiagDetail',p.diagnosisDetail||'');
-    setv('pOtherDiag',p.otherDiagnosis||'');
-
-    const c=normalizePatientClinical(p);
-    window.__functionalRecords=c.functional.map(normalizeRecord);
-    window.__diagnosisRecords=c.diagnoses.map(normalizeRecord);
-
-    /* A função de renderização clínica pertence ao mesmo módulo do cadastro,
-       portanto mantém exatamente o layout atual. */
-    try{renderClinicalForm();}catch(err){
-      console.warn('Moviment Up: renderização clínica legada não disponível',err);
-    }
-    try{updateDiagnosisOptions();}catch(_){}
-    try{window.calcPatientAge?.();}catch(_){}
-
-    const msg=e('patientMsg');
-    if(msg)msg.innerHTML='<div class="notice">Editando cadastro de <b>'+esc(p.name||'')+'</b>. Os dados existentes foram carregados pelo ID '+esc(id)+'. Faça as alterações e clique em Salvar paciente.</div>';
-    try{show('patients');}catch(_){}
-    try{window.scrollTo({top:0,behavior:'smooth'});}catch(_){}
-    return true;
+    const p=db.patients.find(x=>x.id===pid);if(!p)return;currentPatientEditId=pid;
+    setv('pName',p.name);setv('pId',p.internalId);setv('pBirth',p.birth);setv('pAge',p.age!=null?p.age+' anos':'');setv('pSex',p.sex);setv('pUnit',p.unit);setv('pSupport',p.supportLevel);setv('pObs',p.obs);
+    const c=normalizePatientClinical(p);window.__functionalRecords=c.functional;window.__diagnosisRecords=c.diagnoses;renderClinicalForm();
+    e('patientMsg').innerHTML='<div class="notice">Editando cadastro de '+esc(p.name)+'. Faça as alterações e clique em Salvar paciente.</div>';
+    show('patients');window.scrollTo({top:0,behavior:'smooth'});
   };
-
-  window.clearPatient=function(){
-    currentPatientEditId=null;
-    window.__movimentUpCurrentPatientEditId=null;
-    ['pName','pId','pBirth','pAge','pObs','pOtherDiag'].forEach(id=>setv(id,''));
-    setv('pSex','');setv('pUnit','');setv('pSupport','');setv('pDiag','');setv('pDiagDetail','');
-    window.__functionalRecords=[];window.__diagnosisRecords=[];
-    try{renderClinicalForm();}catch(_){}
-    try{updateDiagnosisOptions();}catch(_){}
-    const msg=e('patientMsg');if(msg)msg.innerHTML='';
-  };
-
+  window.clearPatient=function(){currentPatientEditId=null;['pName','pId','pBirth','pAge','pObs'].forEach(id=>setv(id,''));setv('pSex','');setv('pUnit','');setv('pSupport','');window.__functionalRecords=[];window.__diagnosisRecords=[];renderClinicalForm();e('patientMsg').innerHTML='';};
   function renderPatientsEnhanced(){
-    const el=e('patientTable');if(!el)return;
-    const list=uniquePatients().filter(p=>p&&!p.deleted);
-    if(!list.length){el.innerHTML='<p class="muted">Nenhum paciente cadastrado.</p>';return}
-    el.innerHTML='<table><tr><th>Paciente</th><th>Unidade</th><th>Condição funcional</th><th>Diagnósticos / saúde</th><th>Ações</th></tr>'+
-      list.map(p=>{
-        const c=normalizePatientClinical(p),as=assessmentsFor(p.id);
-        return `<tr><td><b>${esc(p.name)}</b><br><span class="small muted">${p.birth&&typeof calcAgeFromBirth==='function'?calcAgeFromBirth(p.birth):(p.age!=null?p.age:'—')} anos · ${esc(p.sex||'—')}</span></td><td>${esc(p.unit||'—')}</td><td>${esc(c.functional.map(x=>x.name+(x.classification?' — '+x.classification:'')).join('; ')||'—')}</td><td>${esc(c.diagnoses.map(x=>x.name).join('; ')||'—')}</td><td><div class="actions" style="margin-top:0"><button type="button" class="btn" data-edit-patient="${esc(p.id)}">Editar cadastro</button><button type="button" class="btn secondary" onclick="openPatientAssessments('${esc(p.id)}')">Abrir avaliação${as.length===1?'':'s'}${as.length?` (${as.length})`:''}</button><button type="button" class="btn secondary" onclick="newAssessmentFor('${esc(p.id)}')">Nova avaliação</button></div></td></tr>`;
-      }).join('')+'</table>';
-    const table=e('patientTable');
-    if(table&&!table.dataset.v19EditDelegation){
-      table.dataset.v19EditDelegation='1';
-      table.addEventListener('click',function(ev){
-        const btn=ev.target.closest('[data-edit-patient]');
-        if(!btn)return;
-        ev.preventDefault();ev.stopPropagation();
-        window.editPatientClinical(btn.getAttribute('data-edit-patient'));
-      });
-    }
+    const el=e('patientTable');if(!el)return;if(!uniquePatients().length){el.innerHTML='<p class="muted">Nenhum paciente cadastrado.</p>';return}
+    el.innerHTML='<table><tr><th>Paciente</th><th>Unidade</th><th>Condição funcional</th><th>Diagnósticos / saúde</th><th>Ações</th></tr>'+uniquePatients().map(p=>{const c=normalizePatientClinical(p);const as=assessmentsFor(p.id);return `<tr><td><b>${esc(p.name)}</b><br><span class="small muted">${p.age!=null?p.age+' anos':'—'} · ${esc(p.sex||'—')}</span></td><td>${esc(p.unit||'—')}</td><td>${esc(c.functional.map(x=>x.name+(x.classification?' — '+x.classification:'')).join('; ')||'—')}</td><td>${esc(c.diagnoses.map(x=>x.name).join('; ')||'—')}</td><td><div class="actions" style="margin-top:0"><button class="btn" onclick="editPatientClinical('${p.id}')">Editar cadastro</button><button class="btn secondary" onclick="openPatientAssessments('${p.id}')">Abrir avaliação${as.length===1?'':'s'}${as.length?` (${as.length})`:''}</button><button class="btn secondary" onclick="newAssessmentFor('${p.id}')">Nova avaliação</button></div></td></tr>`}).join('')+'</table>';
   }
   window.renderPatients=renderPatientsEnhanced;
 
@@ -5358,67 +5190,46 @@ setTimeout(render,200);setTimeout(render,800);
     if(row.updated_at)incoming.updatedAt=row.updated_at;
     const bundle=incoming.__movimentUpSyncBundle;
     delete incoming.__movimentUpSyncBundle;
-
-    function mergeKeepData(local,remote){
-      const out=clone(remote)||{};
-      const src=clone(local)||{};
-      Object.keys(src).forEach(k=>{
-        if(k==='id'||k==='createdAt'||k==='updatedAt')return;
-        const lv=src[k], rv=out[k];
-        const remoteEmpty=rv==null || (typeof rv==='string'&&!rv.trim()) || (Array.isArray(rv)&&!rv.length);
-        const localHas=lv!=null && !(typeof lv==='string'&&!lv.trim()) && !(Array.isArray(lv)&&!lv.length);
-        if(remoteEmpty && localHas)out[k]=clone(lv);
-      });
-      ['functionalConditions','diagnosisRecords','deficiency','diagnoses'].forEach(k=>{
-        const a=Array.isArray(out[k])?out[k]:[];
-        const b=Array.isArray(src[k])?src[k]:[];
-        const seen=new Set(a.map(x=>typeof x==='object'?JSON.stringify(x):String(x)));
-        b.forEach(x=>{const key=typeof x==='object'?JSON.stringify(x):String(x);if(!seen.has(key)){a.push(clone(x));seen.add(key)}});
-        if(a.length)out[k]=a;
-      });
-      if(src.photo && !out.photo)out.photo=src.photo;
-      return out;
-    }
-
     let idx=d.patients.findIndex(x=>String(x.id)===id);
+    /* Se o mesmo paciente existe localmente com outro ID, reaproveita o
+       cadastro local somente quando ele foi alterado depois do último snapshot.
+       Caso contrário, o registro remoto passa a ser a versão canônica. */
     if(idx<0){
       const key=patientMatchKey(incoming);
       if(key){
         idx=d.patients.findIndex(x=>patientMatchKey(x)===key);
         if(idx>=0){
           const local=d.patients[idx];
-          const merged=mergeKeepData(local,incoming);
-          merged.id=id;
-          d.patients[idx]=merged;
-          reassignPatientLinks(local.id,id);
-          if(bundle)mergeBundle(bundle);
-          return true;
+          const oldSig=(snapshot?.patients||{})[String(local.id)];
+          const localWasChanged=oldSig!==undefined && oldSig!==sig(local);
+          if(!localWasChanged){
+            const merged=mergePatientFields(incoming,local);
+            merged.id=id;
+            d.patients[idx]=merged;
+            if(bundle)mergeBundle(bundle);
+            return true;
+          }
+          return false;
         }
       }
       d.patients.push(incoming);
       if(bundle)mergeBundle(bundle);
       return true;
     }
-
     const local=d.patients[idx];
     const oldSig=(snapshot?.patients||{})[id];
     const localWasChanged=oldSig!==undefined && oldSig!==sig(local);
-
-    /* Nunca substitua um cadastro local completo por uma versão remota
-       incompleta. Mescle os campos e preserve tudo que já existe. */
-    if(localWasChanged){
-      const merged=mergeKeepData(local,incoming);
-      merged.id=id;
-      d.patients[idx]=merged;
+    let changed=false;
+    /* Regra principal: se este aparelho não alterou o cadastro desde o último
+       snapshot, o servidor pode trazer uma versão nova mesmo que o timestamp
+       local seja artificialmente mais recente. Isso corrige o caso em que o
+       tablet ficava preso aos seus dados locais antigos. */
+    if(!localWasChanged || timeOf(incoming)>timeOf(local)){
+      d.patients[idx]=incoming; changed=true;
       if(bundle)mergeBundle(bundle);
-      return true;
+    }else if(bundle){
+      mergeBundle(bundle);
     }
-
-    const merged=mergeKeepData(local,incoming);
-    merged.id=id;
-    const changed=sig(merged)!==sig(local);
-    d.patients[idx]=merged;
-    if(bundle)mergeBundle(bundle);
     return changed;
   }
 
@@ -5479,23 +5290,52 @@ setTimeout(render,200);setTimeout(render,800);
     try{
       const firstSync=!hasSnapshot();
       const snapshot=readSnapshot();
-      let remotePatients=[];
+      const remotePatients=await getRemote('patients');
       let remoteAssessments=[];
 
-      /* PRIMEIRO: baixa pacientes. Isso é obrigatório para a sincronização
-         tablet/computador e não depende da tabela assessments. */
-      remotePatients=await getRemote('patients');
-      /* Antes de mesclar por ID, consolida os IDs locais que representam o
-         mesmo paciente. Assim, os 52 cadastros locais antigos não viram
-         duplicatas quando os 108 registros compartilhados chegam do servidor. */
-      const consolidated=consolidateLocalPatients(remotePatients);
-      let remotePatientChanges=0;
-      for(const row of remotePatients){if(mergeRemotePatient(row,snapshot))remotePatientChanges++}
-      /* Uma segunda consolidação captura casos em que o paciente remoto foi
-         inserido após a primeira passada e garante uma única identidade local. */
-      const consolidatedAfter=consolidateLocalPatients(remotePatients);
+      /* PRIMEIRO RECEBE. Na primeira conexão, campos locais preenchidos que
+         não existem no servidor são preservados; campos vazios recebem o
+         valor compartilhado. */
+      if(firstSync){
+        for(const row of remotePatients){
+          if(!row||row.id==null||!row.data)continue;
+          const incoming=clone(row.data)||{};
+          incoming.id=String(row.id);
+          if(row.created_at&&!incoming.createdAt)incoming.createdAt=row.created_at;
+          if(row.updated_at)incoming.updatedAt=row.updated_at;
+          const bundle=incoming.__movimentUpSyncBundle;
+          delete incoming.__movimentUpSyncBundle;
+          const idx=d.patients.findIndex(x=>String(x.id)===String(row.id));
+          if(idx<0){
+            const key=patientMatchKey(incoming);
+            const same=key?d.patients.findIndex(x=>patientMatchKey(x)===key):-1;
+            if(same>=0){
+              const oldId=String(d.patients[same].id);
+              const merged=mergePatientFields(incoming,d.patients[same]);
+              merged.id=String(row.id);
+              d.patients[same]=merged;
+              reassignPatientLinks(oldId,merged.id);
+              if(bundle)mergeBundle(bundle);
+            }else{
+              d.patients.push(incoming);
+              if(bundle)mergeBundle(bundle);
+            }
+          }else{
+            const merged=mergePatientFields(incoming,d.patients[idx]);
+            merged.id=String(row.id);
+            d.patients[idx]=merged;
+            if(bundle)mergeBundle(bundle);
+          }
+        }
+        consolidateLocalPatients(remotePatients);
+      }else{
+        consolidateLocalPatients(remotePatients);
+        for(const row of remotePatients)mergeRemotePatient(row,snapshot);
+        consolidateLocalPatients(remotePatients);
+      }
 
-      /* assessments é complementar: se falhar, pacientes continuam sincronizados. */
+      /* Avaliações são complementares: se essa tabela falhar, pacientes e
+         treinamento continuam sincronizando normalmente. */
       try{
         remoteAssessments=await getRemote('assessments');
         for(const row of remoteAssessments){
@@ -5509,15 +5349,58 @@ setTimeout(render,200);setTimeout(render,800);
         console.warn('SYNC: assessments não pôde ser sincronizado; patients continua normal.',e);
       }
 
-      if(remotePatientChanges||remoteAssessments.length)localSave();
+      localSave();
       refresh();
 
-      /* Primeira sincronização: os dados remotos acabaram de ser incorporados.
-         Não envia os dados locais antigos por cima deles. A partir do próximo
-         ciclo, o snapshot identifica somente alterações reais do dispositivo. */
       let changedKeys=new Set();
       let changedPatientIds=new Set();
-      if(!firstSync){
+
+      if(firstSync){
+        /* PRIMEIRA CONEXÃO: envia somente o que ainda não existe no servidor.
+           Isso evita que um aparelho recém-conectado sobrescreva o outro e
+           também garante que registros criados antes da primeira sincronização
+           não fiquem presos somente no localStorage. */
+        const remotePatientIds=new Set(remotePatients.map(r=>String(r.id)));
+        const remotePatientKeys=new Set(remotePatients.map(r=>patientMatchKey(r?.data||{})).filter(Boolean));
+        (d.patients||[]).forEach(p=>{
+          if(!p||p.id==null)return;
+          const id=String(p.id), key=patientMatchKey(p);
+          if(!remotePatientIds.has(id) && !(key&&remotePatientKeys.has(key)))changedPatientIds.add(id);
+        });
+
+        /* Qualquer histórico/treino local que ainda não esteja representado
+           remotamente faz o paciente correspondente ser enviado. O bundle do
+           paciente leva junto os registros vinculados. */
+        const remoteBundleIds={};
+        ['training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations','aulas'].forEach(table=>{
+          remoteBundleIds[table]=new Set();
+          remotePatients.forEach(row=>{
+            const b=row?.data?.__movimentUpSyncBundle;
+            (Array.isArray(b?.[table])?b[table]:[]).forEach(r=>{if(r&&r.id!=null)remoteBundleIds[table].add(String(r.id))});
+          });
+        });
+        ['training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations','aulas'].forEach(table=>{
+          (d[table]||[]).forEach(r=>{
+            if(r&&r.id!=null&&!remoteBundleIds[table].has(String(r.id))){
+              const pid=patientIdOf(r);if(pid)changedPatientIds.add(pid);
+            }
+          });
+        });
+
+        const remoteAssessmentIds=new Set(remoteAssessments.map(r=>String(r.id)));
+        (d.assessments||[]).forEach(a=>{
+          if(a&&a.id!=null&&!remoteAssessmentIds.has(String(a.id)))changedKeys.add('assessments:'+String(a.id));
+        });
+
+        if(changedPatientIds.size)await upsertPatients(changedPatientIds);
+        if(changedKeys.size){
+          try{await upsertAssessments(changedKeys)}catch(e){console.warn('SYNC: avaliações locais não enviadas na primeira sincronização.',e)}
+        }
+        writeSnapshot();
+        localSave();
+        setStatus('online','ONLINE • sincronizado com Supabase');
+        console.log('Moviment Up — primeira sincronização concluída',{reason,remotePatients:remotePatients.length,remoteAssessments:remoteAssessments.length,patientsEnviados:changedPatientIds.size,avaliacoesEnviadas:changedKeys.size});
+      }else{
         const localChanges=stampChangedLocal();
         changedKeys=localChanges.changed;
         changedPatientIds=localChanges.patientChanged;
@@ -5528,11 +5411,6 @@ setTimeout(render,200);setTimeout(render,800);
         localSave();
         setStatus('online','ONLINE • sincronizado com Supabase');
         console.log('Moviment Up — sincronização concluída',{reason,remotePatients:remotePatients.length,remoteAssessments:remoteAssessments.length,pushedPatients,pushedAssessments});
-      }else{
-        writeSnapshot();
-        localSave();
-        setStatus('online','ONLINE •  '+remotePatients.length+' pacientes sincronizados');
-        console.log('Moviment Up — primeira sincronização concluída',{reason,remotePatients:remotePatients.length,remoteAssessments:remoteAssessments.length,duplicatasConsolidadas:(consolidated.duplicates||0)+(consolidatedAfter.duplicates||0)});
       }
       refresh();
     }catch(err){
@@ -5545,7 +5423,6 @@ setTimeout(render,200);setTimeout(render,800);
       }
     }finally{syncing=false}
   }
-
   /* O salvamento local continua funcionando sem internet. Depois de salvar,
      tenta sincronizar automaticamente quando houver conexão. */
   const originalPersist=window.persist;
@@ -6325,10 +6202,8 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   }
   function header(title,p,plan){
     const prof=plan.professor||'—', date=plan.date?formatDate(plan.date):'—';
-    const logo='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAACECAYAAADhnvK8AAAuI0lEQVR4Xu2dCZwcVbX/iweKCuKCIu48ERVX3BEXEPfl7xMxKqiIiiHd1QNhEfXpew4I+heQyHTVTAbEyOLCmO7qyWAAQePC4gOUzUDYXpCETG9V3TMh+9LvnFtd3VXn3lu9TM8kM5zv53M+k3Tde2v/1bn3nnuvYTAME2HNaSNPzycGDi8m7ROLpvVD+PvThpnWonwyfWohMfBBb/7ws2hehmGYWUf+zAv2GU/a7y8k05cXkvamQtKqtWHbQRQvL5vWO2v9/f9Gy2QYhtmtAQHbt5AcOCGfsFyFwLVvpnUTlHUgLZ9hGGa3o1ar7eGmBudBlXaHJGZTMK9v8L10XwzDMLsNT5x66QuKSev+QsLaSQVsqgblbi0l7ePoPhmGeRKAbWFQHfxQIZm+BAThb2CrCon0v+Dv4+BtrYG/j4DdXUjaN0C6s6HaeBh6Y7Sc6QCPrQT7hP1uocLVW7Mn8wuGXk/3zzDMHMU1rdeBsPwCLC8LQksbByHMFBYMHXvH/OGn0LJ7wVrT2h/283vFvqfLVq0+ccnT6HEwDDOHqCxc9Oxiyk7nk9ZmhQh0bCCE4CGmz3ykhyEm4ycPvLZg2o/SfcWbPcXqsb0TrsvX6bEwDDNHKCQG3wgv+//KL38vzC6VkkNfrJ120dPpfjsBqt3vK5jpbXL5TSsmrbWwPwfOZ4Hbt/i1tb6BvbFaPgleY8kc+iSI8m8g3QTN19Kgql1NDD6HHhPDMLMcLzX8BhCXivTS99hgH/eXThl8K91/O5RSQ0dBGTrx2wGidy/2BLcTw7fOtF4Ox3KPopwWNvAZWhbDMLOY/Jcv2Ade7oL8sk+flZL2lWs68Aarpw2+AvJtoOWA7QSPr+om7SNonlZgmx54g/cpytRaMWH9mpbDMMwsBTsp8kl7NX3RZ8JAfCZLpvUWekyU/IKhAyC97J2Cx1pKpT+14qj+vWiedqnB+RcSFvZqS8ensfXteJgMw8wCilBlVLzkM2kbCym7nx5XwMr+/qcWTPtumg+qr0/0auxuKTU4n5YfZ6VEd1V4hmF2I4S4JK0Oe1MVZlp/KKSs+eML0kcVTh5407hpvQ7jAUEojiwk7ROK5uClkG5cyte0HVDGKA5jo8cI4nS8In3d7A/T9N1Q6x8BkbUelstXG4jv12gZDMPMMvLJgePoy92+2TtBCJZivCAtV8WK/v698qb1TpyNBcRG19N8y7r5F78snK+ycOggyHOLIm2tlLJ/FU47FUCkv0XL1xkI9bk0P8Mws4yiaV9NX+42bSsIYJKW1y7oeeLwMijn5mLS2h4p27RWFk9ZfEg4PXaWwO9XFERPb+Q4Nk2eMfy8cNpugfM5QnGeGrMvofkZhpllFLqL+dtRWJA+lpbVLVhNBo/qDrKP8fEFiw6iadHzEvsPp03Z59B03TDeN/B8xbkqDafMovkZhplFuH1X7VfsanSEvZiW1QtKiYEjoar7eEhkdqqq1+A5nkOO595e9cqCl1mUz1c28Fovo3kZhplFuObiD9EXuw1bVTOMaZvoAIWsaA7+sLE/09pcMq1XRdLUanvA778MpdlSG1i+dzhNtxQT1pjinGUzrZ/QvAzDzCJKKauj0A9hC6wELafXoMDmU+k3gAfo1cUmX0pd9qJImnkjexZTdiY4LhDN88LbuwW8yYukc1ZY3rQW0rwMw8wioCp5Bn2xYw2E6KG+gZ54Wu2AU9qDIF2O+wYxXFf8ZnR2Zgxgzjc9to2100baHlWiA8r7jnTeKksNfYTmZRhmFgGikpJe7BiD9D+jZUw3NQOqu0k7WfA7Ph51k/ZLw9vhmA4sJNMPimM8eeBN4W3dUGjzo5A/c+gAmpdhmFlEIZU+lr7YcVYyrZNoGdOGs+kgI+s1JiCth6gU4e8NNTInXzlpH4rtgL2YqqpgDv43PW9qILoP0nwMw8wyMNaOvtyxlkrPTLVvRW0vw6n+Dsw1RrzGUDeM9yua1u2FxOBgODlS8ld/m3JQNJR/sXTexEAAbZqPYZhZSAHH4SpecpXhKA6af1rITZxgOJWasNHK6eFNtXnz9sSqOE6OEP4dAfH6OP2tU6CMNnqBbZ4Oi2HmAvBC3ym/4GorLhh6M83fc0ZG9jRylbUNAUQbK7+GJqthumkAxG01PW/JEoOvoPkYhpmFwAt/pfSCa6yUSr+N5u8ttT2g2nu1EL1cdWdDAHPVa2nK6aDe6xwbGF5MWrdPZxwkwzAzSDE1+FX6kutsPDF4JM3fU0YnXglit6kuer8BT/C0ugjugKrwV2jyXoMB1/ScoyYmf3gfzccwzCylPtGobop5KgDT1/Y1WnomCN2/fPETf58tfncqd/oiWC2GO0Smg8KC9Efkc47YOHqJNB/DMLOYommPKF52yYqJdB/N2xaiV7eSA7tdb9X76t6eL3bB71lvvPF7rnq/nC9kueotxpgXmUqrE4pJ+7v0nKPGM8AwzJyj3Df4QfllV5hpSeEnbZOrntwUuGmyXOVsuttOAIG7VTrnpvhNTpz2s+fSPAzDzHLcvoH9Cu2Ew5jW/9C8bdNf+zcj593aFKvqpfD3+8Iavb7VrfD7+Y3fm3YO2GQ97wYjWz1P/I5/c/B///dJIzu5P91tu5RS6RdJ5xuyXTEKhmGYGQJHedCXnhqIwPYpjbcdLb0ahGpbXewy4jdn4mN1AcPffkhyNHGqHwDbIdKh8CG56lA933Zj9Ik3khwdUUymT6XnG7IdONqE5mEYZo6AEwsUk9YaxctPRHDgszRvR/geHgoeiFn1c/AX2/vw//catZo+vATbEbOVu/203qQxtvHF8Hej+H+uej1N3ing3V5HzzUw+DicT9MzDDPHKEgTjcoGYvBLmq8jalAVdjy/wyNb2drw/nLVD9KkEjdCFdepVPy8nh8u41TcqVR9EZyDEM69Ss81MDoBA8MwcxBcJBxe+IeoAIQtn7Tup/k6Jjfx8Ybw+eLX/gzTTqU/ktepdNczHSJvWqfQ8wysaA6aND3DMHOUfNL+BhWBiCAkrW3jC4cOovk6YqS2JwjX6oaIjU58lCbRMjZxCORpjhLJVKc0LK3WN7A3VH81i6Lb99L0DMPMYXB93GLSjh0fjHGDNF9HONXvRD3Ayp9FG187ONVfRT3AiTRN0gliKi2xwh05T9PaAp7hB2h6hmHmOF4q/YZC/OiQzevmX9jdUpTL3f2MZsdHyRCdIfjvyTNoUollE4dD2u1++uoj4m8W8i+beDtN2i4g9ksU54ee7sU0LcMwTxLqa/BKwhCYe4rdfrU1AKu+uerf6uK30Rjb9DIjN7Gq/v+Csbymn25/RW1fEL1CPe1DUNbTG6NEcpV/is6VDin0DRxMz8sXP7v6r8Tgc2h6hmGeJOCMJ9gGRsWhKRLW32melmTXH2kE7XcYDoNcv/4AELYtda/uFm0oTK767br4QV738+I3p3Ji4zdnIkVytKSUUM7+vH36Z71hGGa3p5T46asLcSNE+gZbh64E4EQGTrXcFKzKY/D/B4QFM8D44vhI4/eGVR40GlVfET/4YH0b/l6vQsP2pROH0N3qWN0verz9VefCwm5aP+/VGsMMw8xyCqkh/bohCWspTa/FqVwYEr/pshzdrY6CaV8onY9p3VXrX9FeZwzDMHMfrAqXTGshDoNTCMYW2PYWmkfCnw3me+DpnRdjlzSELOvd3/jdqdxV/x28w+qwIl/UcIRIC3A2aajCj4fPBc5vckZmvGYYZnaBi5CXzMHBomq2ZNO6qSdVRr+D5Nq62G0wlrqvM5asfhr8e039t5UgpJHV4LqhvszmED2PUmrweJqWYRimgWr6fPCktoIwHkbTdsWK4r4gdEE74d/BnPq/N051soMAEfeXsMJCvqNoDvqTKzAMw+hATw/E7noqgmDVns2U7FTPMnKhkR7Cqt3PQxiiPubXiQi4aV2HHi5NyzAMIyGGjiXTD1IRLCXtk2narslV/tIQv2ylaozVnkGTdEMxmf58RPyS1l9pGoZhmFgeAhEET/AfRAQ3F/qGD6ZpuyI7+a6mAHqfpJu7oVar7QFV34cbx5uw/lVZuMRfd4RhGKYTSl/78TNBBK+JiqC9nKbrGqfyA8PxbjaGa0+hmzqlHtR9ecjz21qYP9AbsWYYZm5TNK1v4SQJ0u9Je1+/R9XvHS5ih0LC6s30URg43aNV4Opjm4OA7uJE0n4lTVM8+eJDeM0PhmEkionB7xRMK+vNH5YECQOHiyn7u3msAvsCM7k7TSC61rT2LyTS64RAm1Ylv2DoaJrGWzD0ehDz39LfGYZhDPd0+6X5RHoLiMQy9ProdiRvWl8AT7CEQgNiePu6+cNddVzg1PxuYvDwogmim7Svrbc13gzi9QsQ4WNKZ132TJonDsjzEyHMprW5bFr/QbfnU+l/h+0TIJJfotsYhmGM1Sf2Pw1E7VFfSOwbUaRoGmRd0j60ZNoiHXiF36bb46j19+9V6hs8EvKuDdrqVAbV7MdK5nDr0SeGEL9j6nkwVlGavQarvJBmDQZ4e6de3PV6wgzDzHEKyfRZTSGy/4HhMDQNgj3EKJIFfyW1tubpwzg8EKHLqNjF2NZSanHsjC3oKUK6MniO28C7+zTdHo4JhH3fTLczDMM0GJk3b89CdPzsjbohcDjcrJRKHw/i09b6ISBElyhErpVtHF+w6CBaFoLVdNi3WOGumLC+QrcjRbMpuMXU4MfodoZhmAggVNEZVEzr9zVc8FwDLjbeSlxK84dfWGh2oHRq19LyxGgV0xrD7VAN9+cNJJTMwdMLzRmvqxwPyDBMS9YvGDoARG8iLELFpHXbmtMu6nqxdBCrAYWwtW99A2+KlIc91uAdllKDnwr/HgAifnIQtoMG+79rhIfCMQzTDiAeSUmEktZDxVMWtz0ZaRiort6nKK9ty5vWSUFZ5dTQ0fDb4yBqHw/vIwDEOxEWP7SyaX2ZpmMYhlHi9g3sB16faF8jlgdxOYKmj0MMTwt6l7u0fDL93aC8YsIaG+8beEd4H4jYT8qaX8AOkWj+R7G9kqZnGIbRUvVj5zZQMQJhXI9tfrrOERWQ725aTieGk7ViOev7Bp6/euEiqS1P9DCb1ldwPWOal6fBYhimK4qmfTEVFCEqSWtHwRw8XRcrSAFxsmgZnZn9YVpmAApxvcNDkc/aBN7i82kehmGYlmDVEcRrhUJYhOWT1h/bWV9jfOHQQTRvB1bGAGpaZgBUeYcVeYSBp9pH0zMMw7QNjvkFkdGvGpe0xsum9U6ajxKErXRoO0qpoaNoWQh4n88omPYtZObnsG3ndX8ZhpkyxaT9HhQUhcg0hAqE6ArvW/JECgFQxoFQdb5fkVdj9s5S0v6+aibnct/QOyLz/sm23Uul303zMQwzV7g+v48xWnq1kSm/3Rjzpn2Ma72TYatCbJpmWo+CaH0De2RpfqQ0f9ELwWvLxXhtga3HcBaaHwFh/L7YLudpWLGXcxYyuw6cJxIXznK8jxnZ8tGG5rlqn9HSM42s+y4o7AQj4/0n/PtisEtgB4NG1vuR4VT6jEzlU0Z28lVGTPQ/swvA++FUPwD3azGI3kPwdwdYrWmVSLDwdADCci4VG7XZ/4C0n8Uxw7QMbFccN62Pg6AuLYSH3ZnWNhxWh0HTlTOsl0fyzB9+ClSzjwEBfkDel2R5HHkSzq8El/EcKe5r3ICLudeeDc/+s43l7n7G9bV9xMp0+PLV+B2YccYmDoFn+XR4pv9gOO6G6DPuXWV0HNI0Nvk8I1c5Bgr7HRSyLVpgrK2DHZ5nZKpvYTHcxYg1d72c4h41zXE/R7NNB4UOenTzSesx9OTWmtarVFVZJH/mFfsUv7nkwJXzopOxolC6fQMvAY/yuE6qzuiphsuJMFr9EDzTd8K1mpSun84cbyfYZvh3FfI+DM7Dn+Dfl8JvKWO08n5jdOKVxh1Tn9H6Sc/y2t7glKWl6x+9Fw+1f62vqT7HwIWqs+4mqaDODcSwcmQvpi5nusDxjoN7sFNxX5rmeMoqY6+pz7CSAbFpVY2NChN4eyBOi0qJwSMLfQMHY+cKChzauvkXv6yycOigEghl6RT7/YVk+hzwIFfRMlpbiwlPHW++dN16YY47AeJ4PjgLrxAfK6Zzrpt4Lnxc8EMjX9/GdW5LAMFFHHXnSZmbhi8S3DD4iuWqnzVy3nuhanUsiOUiuIlFsO2KPPUDcK+bej2c6Yps5beGVO0N3xvvLJpluljR378XCNRfZAHapVattur1za4/FJ7vR+rvgHwNqTkinW/+v+U01BzPg328Z+6+J3Be2FyQ9b4N5zoG//5+LxazF2Qr/wHXUK8/WfeB1h8YFCndi+K4fxMuu64QrOr+EjzHnHuSofMcHfcymo2ZAbA9Kut+SLofzfvyXzTLdIKxeUVpwaRdZKa1kbYbasHrOFZ+DVyzjdI1jJj3RWO09CIjmz8AhPMAY6T8YmNZ9Wiopg3DdtI2JdkOEId/9EwYdicc9zdwflsi55txn4Dr9XqatCtGigdCmY8rrinaKkMbd7p8/fPhoq9SZELbAkr9Za3wqcCb7njYbkjLWmmM1JTtOcw0gy+hfD/q5p1Lk083Yk6+3UIE7c6835Ha0+GarZGvYd1ylf+mWSIsWf000fueda+V8kZtUrQ7zhWy1XMV5+hbxl1vXOXuR7N0Rda7SyrfN40AivY+93ZFBrTt4NF9lmZpC+wlczz0KMPlrYYHSFo9jJkBspP7K+5vYOfT5DMBVjtBhP4mi9JMmX1lJ+OSBSNr9AKYAe9tpM2wInQE/GpbQSqnaeB8VGekg2rayXp/V5xf08YmX0OzdIXj3SmV7ZtGAH23lCb2DUNbpsI11VfAiYeq1OVx8QAxMw9+6Oj9bdxn90KafKbAqfOLSet2WZym18D7XFs49dIX0ONpiS+Aj0nX0Lf14jp3Qm79ayHfg4qyAqsYo94babZZh+P9UHFuTcuUWocftUPWu0Mq2zeFAGYrX1Mk9A29wl54a7nqmaEyPeOK/D40CTMDjNSeJd3jpl1Ek88kOAqkYForqUhNo21cv9A+lB5HW2DbnE4AsROjm7WKUQQdbAtTlCnKhZd3ZOXU38VdCTYdOO4D0rlh723OPY0m7xrsq5D2IYwIoB/YnFckRNto/O6JA5uJp4Bw9b1H6+U+Picbd2cDy2v7Ke6zb467iCafacpJ+9AiLj8pi1XPrWgOdn+++Pw63r+kayiuY5cCiIxOfEJUoWmZgY1OfIFmmXVg+yf2AGfdW4xM+R/w9xfGMvd1NNmUyLk3SdfONyKAuYmkIlFgtxmdto3EkcXQGm+xkaucQDfFguEA2Ls8Z8MCpoHgmlHiBfCnNHnb9PDeFFLpdxdwbLBCtHpo99D9doQQQFctgBgihmEe3bD8ob1BAP9XUWZg28VIk7lG188P5lPkzXoYbE6vHVpIAG/BnixvqyKRb6PeJ6KlzhA1HLUwcRx8SX8J9rCB7R8iih7/evfDb8PwgB1Fs3XE8o0vMTDwN1v5BfxdAQ/zLWA3QvlDYihfJ6ysPRW+OF8FN/4qyH+r4ceJYQM5uvo3GjnvR0Z28l3d3+Q2EWEu3oJ6Z1ZwzdbC+V1hjMH+kVgBrLTvEeXcl4qhkI73F9gfNuDjvXHhXPGLfoGRfaLrYXU4gqNg2lcpRKtnlk+kj6f77QjfiwlqNNQ6bwMMs1R4R7TM0H2qfoBmEYzVnmGIgPfKpXBPbjP8kVgu/AbH6f3RwFFZYzHDHfH5HK28WXTKLHU/Yjjld4ghrUsnXwOO0jtFvC+OCtOBESI59whjtPoNSJsUxyJGzsA+8dgoIn3lq/6xufe0HRmScV8C5WNv8j3C2866GDd5Nzy/PzBGn/Dbc3EYHL1uvoUEEEdmyAnq5hVnfByjU/kvOCH8+rU33M7x4EvrgXBVD6ZFKcH4Rf/L4EplybYBHqIbjF+XXkSLEeDDknH/qy527R1vpoztO/dCucfS4qbEaOEF4liz5VZxaWVD7pEPHV+LKjD2IDver+A8xo1Ip5bC/KDfMtiIcf36A2hRrajN639qIZleR4WrFwZV7FXtzEEYixBAVyeAcB/W7k+ztI3fLKV3TDLlHzfS3lB7lvjA4YdOF7srG34c/yo6J8NkvdWKtNS2GzgklpIDwcSQHTm9bxjsjGQ2vFDUNPyx6OQcywXtSDExjr1yav2joz/PDJTpVO6oO07y9ogA5rxvKRIEdmP0CKYRfIHxwORjaNPKmxsXWAd+/eIunN7WGMuq/x4pa2TiuQYOqZHTdmJ/npKXEJArHwPnr2vD7dT0nSD4cfI9SpoHDcUOvUDNS+uVIP+JtMhWgABeTsWrF1ZK2ifTfXUMjjvVCqC3JdZTagf0bqRyG3abSHPN5lcY7X3MdbYJhOg/Q/tEr5GmIQbnlpuQF5Ma3fAiI+5YHPfU+uCIeGdB1eGKDo4fPtPeSJp4Cwmg4zmKBIFdEj2KacT/gtH9o5qvhWrWWfD3cCFCufI7DQzW1Y33wzAOVTXTH8+sSF+5AfJ8WEwFlS29ysA2ygx6UjStd02kPBzALqURNiFc84z3bmMEjtepHAY3/UxDO3Deu0nZftEuozjrDlS3pHLxQYFqfRb2nSsdb+D4VceFqn6L0QeqMBjR26mdROFRKPtLYjYUBHsocWhk1i0p0m4UzQAdUDSt91Hx6omRJTK7whfA1Yrz9L2QKQtgWXfN0TaI5zzrZhXbanUv6XSoSr9RjC12yh8wsO1dJT7oqeP7YRh7iGOOF8HHjVH3o/RQG4galrtSypdxbxbC5g/FpGVGjfZyO9W3Gr53K6f1q/jnGkvLn4br9RkD41gz5aIiXdgiAojtNTRB3WZwVAB6B+Hxe+KmuNcbYxtfTJMKchPobiteZhDGa9ZHwxrQW/NdfnqOD8jxQHVE1TaS9s5IZ5BTOciIDvNDwblFPHAqRotY9VbfmEzlGJq8Lfx5/BRDDeELjV9bFTi+VDw0NE/DooHQ+JLnoAorp0O7zdA19Oe8kxXp8dhc0e7cJmLSBNOqSAI2RVtrWt1XTwPiBBADl6csgJVLFeU2DavJ2OYV9Yq2wbUf0t6XpeWEoRonixMxBMebwRqFYn9o2F7XCmyDo8PcnAl/0Xts8/N7fxXvbt3CAohTi+lrWn81RsbltVowaiXr/VmRPrBwG6Cri5bGdoamazzd4NcMe4ZFGyCI4VhZLXxh0KOhxyzMuzvS+5nzzpfTuHgzLw6VJuO4ZxjBjXTcJXQzeIyfFNVux/261JaiAudKpMfgH6/b0fBCBL+mulE7jnsOTR7B/3jI+fxj+VEkbUZUWRTp4AFGAdYhHkIpj2/YyN4BIIA3UQGbom3veNSHCuyt9dur5XPM4tRXk1MT2WzZkssNGc58gm30o94X4P8/NXAiC/ytFbreUadqi+04HFYlkiJNpXWUgD9EsFkVdrxt0rWIC4YOBFCEzbm/l7ajZdx/KiMcAnD0mc7haFsAHbc/UujuRsb9vHTMgWEvUYDfEyunQe93bJ3cMxXmmvKhkM7uSczisonDpWNoHG+lvUH4AbpzxznndF//AIxPo/ka5jWXf8QHUTs8q/ztUIkyoyVdE0HN+G3pKJo8DhDArELEujaoVq+h++iK+HCVTdJL3ynYBCWX27Run0nRQ68oD2dwCtrfsMlH2u7i83UnKU3G78BpdsZhxAZldPLVUtmBBVNV+dXpqCcpzNsB+VssVYCzzWhrt20KYNazooXuIvBFxDaMXOVsOKZRQwxy9tbBCeoj5jOlt4i86Flqv9LiHLeI3qteInoHy5/xJ2YUrvhq4eXFRfgvLb2NFhMLNg/QMtCw/bEVfu+lnNe3sxvpsu43FNvRwDsox4+e0EfhwxfefS1NHgcI4CgVsalYMWk9RvfRFaJNS0QAyOc41V5gxKksVZRbN69Ek0vg8YkQlOp5Bk45JcLHKnnxkZTKq1vwIda3cddaLp3gVD8cOs6tohpLwf3QcgMLBBAdD7rNL/PPpDQ1Wc07QgTwVkUC3zKKru6ZAF3fjHc83Czs9cEwCrU7HmdhLyPrXSltl61i4DAjx8Vpij7axoSJUbDKLsS5jB7T1I63FWLSR0VjNvZw57w30OQSonog5Q2sOYOJfvZonBVI7WX6VV+1x+1bJrbqogAE6+9UxKZi4AFuq2GD/1QRAuiqBRA/dtj2PBX0HgzaH2hy/2M/8THY9j+QFzuhOn8OcSge4neG4Hyfcpqs9//JnqM47s2NtI67UhlK97tNL5fLrRu+e2i6qfTCz2gc/pR+NC9aSAAzuI6HlMA3x3s8WuIMkBVhOeoZNpq2w8B2PrzR8jbfMqVmADcGPCs7C+JM9DL/U/SOocekA3t5MZwlNrwGJ4fFIE1vubytbtgT3S6Z8pel/L5tjFT9dcQKoPfdRjr9C7hBEjGn9FbRw5fRPrT4PK0QHQcdUF+2cjMVsala7azLnkn31TG+B6iLNZtaIPRoDauRiupfYGSqrYzodFKLcdM2Ghi0nnV100RBTaTgd+KhE+K490nbhXn/1AYsj6x7WSRtLlSjCIPD3qRy64biF1dFznrtDQV0vGVyXmFhD1A0oNIETUN3diZANzlbXiHtP2ojcKM/0fA+RivvU6QJjjsaaJwTizfJ6doy705JWPxxzd+uBzYr8oiH9yJxjMGwJT9OiqbzrZNqeE4sQiWXgUGoI+vlXjGK33tJ89bNa7btaZsOvKK4D2LRGeFdrzLig6In4Z6d0XFHD1BODH6JilcvrJpKR+M6uyFeALsfCoeglyOX2TSsoiK4ql+2PGbgmiM0DRoGAzvuQiE4gSeG4TE0XWC5UPOEricfnYlfrVP3cPsdMvV9x3jBGNZGyw1s+A7w/kS0grzNN30YThhc/EjOixYOgykcrEjQNHRndWrfK0RXt6ZHU5j3d2XPIc4eK6WtW676eZrcwN7arDsupW3H8PjCXg/2EOsGrAtPT9EAjrFyNG2z/PY/NFiNpPl9m1SGBVBEVUlZha5FOjdae+JxtkMMckcPegqeUD5hraDi1Qtzk/YRdF8dIzqJyhoB9CpdT4aAHXNx1x4FCMXV78zSNGF5m+H57Fe+u763qMiDZYeiGdATw1mbaBrf1DHCjvfXUJqr6eYGcSPQhACWj5Z+b5j3SVqcEke7OBKZDAHb+uREwc42N9oFekk4WNkp98n7rRu6sao2BCTOTaYeYACK2FL3WHiIfmngkLS4eKSo7WyIcOzXiQRMh8HxwlL6umEnT7toBbDcXhUY0Y7oCAmgPv5KNrGgD3qC7u8NDMdo1VDeBuXThl4MYrWRilcvrJiyv0731zFCILTXqHsBdKr4oablNS1X/ZafThPc75t+Wqls+SuK9L7hiKxIWm0MqJx2tPS2yHbdO4jgmGJaXmAiVhCX3VVs8+1rtDgl2FYp50WjAlh6YXwbmVdS9uR0w2j1bfDQrIQycULU54ruan2jeQkuxr60iAY4SFvO4xsugtwuwh2v/MTwZ/ZQVyX8Mn8l0mfL+k4Vp3gYKb2JH7mvLr+TTpCMNyDl922nuL7t4Hi6kSlhAWw2ZkcNvDv3QgN7ibEq1k7sWYfgON2Cad1Dhat3Zl9F99kxOGZVP4FpdwI4Vn2LoqymOW5eeIj+x1RzD+GYVKOhAvzVAWke3+iEBdiWTtM0rBJdOjTr/jy03TMGHtK398Y5EWL5Vhz6ptiGFh4HHQeON6Z5fSMCKBJ7VysShqx8eexFbYWodokvW1MAnPKJ/hA0uq9ge0U9miEgzo3OFt/TSIceZM77eKyYBuCXU7tyl3eXSIPD86RteLyeR0qLEjcTM34R2yXuAXa839DkEn6gqpwXDWd3CciWh6TtgY1WPhMqsT2wOjaiXteXkl+QPrrQ4ZKZHVqZ7rNjfE8FvV75+vjtnp21AWL7LU5WIZfVtGBmdpwJiW4LLOO2GhO/QMojzNuhfMez2s6QYiNawu+1DQky7CMOnJlIKq9ueF39Naw1zTTe3bQ4JTmMyqB5hSkEULRnaOfQD8z3gDpFiJ/kNW3xI87jvLgWg+exqkXzBLZsvT+54vJxjGoP2lMmofrbetJFXfc5jptGtNVHr0JKipIpf1DOUzecQqhd/JmIdR57s6quA2MO5Xy+4UicABzpQbc30nlV8ETUDeEqMuVkvZpcER1DMUyeMfy8YtKeVIhWT801L2n9LMThr7Anj3v1rbOxwBhwrx+5EFzzqxsC5a8hIqfxLT5MRBdfh/dHhVP5tJQ2MIzN9WNtQ81o5c0tR3I5E++Qygos6CyLepRkv178VGbofeqD1BUCiPiR17pGT7wBuLr9ncbvOhi1kMu/AfJiyEq0rIy7RFw4bJPTzUaNHQ+qL1JA3KDtoC0MA3aj2zYY2fXxS+/pht+M1ecfjOuwiVuzIev+WkrfMK/psbYDrscslVE3bIjWtZsiGVcfYOu4P4ikzXn64VhYRV7SYjQCVqn8edmaHUbojccAVd9pnQewaVOcEUZUgcu6KjBeny/RLBL+8o34XGi8ncDAmwmvlua/q4p0uF8Re6d+b/C5cHRTXnnblc+N6JTRibOHzgAudRE6fq91bTE3eYRcVt0CrxJjWvXX5fH48DRRS9LFQWoEEPE7FjTDnxq2CXZwpZjxRIU/hu+j4qbhrBg0P47hDYdEON6PpTSB4aQElBUrcEC1vnom8pXfLtKiEMreEo5TlJcZFG63u0hUBWh52Ngd9KiNet+UtjctS0oNRqOkDBx1Iqf3LdPhinv+fdKXhyKO8X6RPDhnYOzsP2iLI3lwWdP4OeIehWP/urTAFb7YuCyk9EH1/iQdV4hSanBBYfpnghYGXubldP8dgZ1pfrwovSaBTYhJRcOiguEj+N7gDEc4UiFudJB/veD98c5VDtnEyQCk9I18chUUBUNXuwks3AscBj/s8ecamCuGwrUCl9eV89atPnekXyvFwRCKNC6+k6ul2g6GePkTmcjvcMO8h6UZZyLgYkVZF6et0bSFRQrDsBLwmDAeDONuvD8a/gytqrQohmdKXfM4zZV6SifMs0MIJvYKYTrs3MC4p1bHhu10+AX2h31dK20XYgRfKpyY1G9PwVlp/6xu//NKxjL38MbxYohLRtv7hwKPD9m7RBUoIxq1Fxv6r1Gwj7LhlL+n/ALrwFlk9F9IPI4N9d7uiwx/KJQ+bdNw1pzTI211/uiO+xVpw4btP7cZGOyMgbKqDx9+EGNG2Lh9l74EhMmjQjV9Zt9Lj6EtcCYg3fRtSkPhwLa9mA+g2m5txPup8HtSFc+rMPzony06E/A5xPcmPEJDZ45YSU2OsxMdeG2MqMKBFXGg54WLxeunt8JjuNJYWjxEpBeLymsXOEfDyVlxyBtOBoH3pHWYmwhf8y5o3XmHDd3+iAvdRW7TMCapvEwEAusQ8/zp2ta0diOIBr7g9PemYTCnH/d2oeG3Qclp4m2VODbKdRteKLbJ6fXmj49FMZS3NdOcQXcVyyiIfNwklGoDMSufYOjuq2jqIMug+rPPLBH3kqZvZWJ+NvCaYxCrwSWtR2WRmk6zt6/v+3nruEmKP3WbfJ69MXAE0Ikof7plNRLBUJOWXmTYRO0Gn0FNx4awjcoPld/RoR9FglEUraJFxLyEirzUMiBkAdg+rq226wyr5qKmpq/NBlEdseBNEAOqxaD++B6qqKHH8zhclKul2ZR1oKhkxLCyuGndsdzHxCgE8VUqn2KIk8ThZpF0W30vsPLpRvnYy+aI9q+S2tMLDGdUEaMgzhYvvg6/ajto+OMuFeUIwwcOJ238Ub1n6zjDb09R7B88hVz1g3Q3LRFfSfTwWgo8jnf+ifAy/SDa1Y3jiI4k2GBkq0fT3Qh87wcbvPFLG1fNQK/nETEVWYvlT/31P6zzZYGaCbPPosfTEqwmtuqt9Q2vKc5r6Zv4v3hO0RPEGk9ZiIZwMsDryYFH3+FQQYGYmxIDkGOXQ8B94mQIR4k8fjtws9YVfh9wqnod2KaOoTi0fDELkWadkjCiFkfCd9Tv4u8j+cRIMaixoTDqBiD4BmV7ucack1mxXo3qvYBn3Is297TF9RtfCif7HUNUF8WLj14b7qAqDs5v9zuptXsZA/ZyomeDCu3gwG73FgMbinPVk5QjLBBcRAkDtke9dxtjE4dI1WwK9j777XLnGb53eI6IkMdFYFrlVYFtjn77IXy9oaqBQote1HWaRZ5xH/iwo4ii0firbhCCXDnMQC8SjyVT+Rmc44CBAbMorKo58FAMA08DHzJcX6IdzwO5sba/GJeMCyllvN+IB9Sp9IuvvG5dBwVF0/qcLEwzZKZ1T7/qurQCrxGubYEdgljNRFvuvkRUN3Hoo8qDmm5WYBsfvjdYK/Jugn//SbzkWajJ6YQVP/BBe3wwCUErRG2g/CXxzjiVc8Qw01a9vmGEUwW1QZwQwZ/TcA8xpA+1BT8urXrPUQP8ajTO8/lzOAZ4zt0fiJmqde8uvl/Ybo5V656uqCe8CdgpHRzPMG1QGxnZs5i0xiVhamn2ThCvv4F4fg/+JormoFVIWF2Eztglb/5w5wHLDMMwU2FFf/9eIEB/kUUp1h4tmdYnKwuXSEHGD/UN7F1KDHwCBLGT4XM7XNOaWjwgwzBMp4yDWIH3t00hSirbmDetk/JnXtCy+lJeMPRiKPc+RRlqM634nkuGYZheUp/oYEISI4VBNXdFITGojk/TUDvzin0g3+20LJWBWK6v9S/RB9UyDMP0EhCnASpEKism7Z/W5g+3bphXgHP+tbuweim1uL1JJBiGYaZCMTn8niJ2YiiEKGQbQSTbm/YohkKf/WFF2QqzkzQvwzBMTxExf0nrTlmAIrahYFryUMUuKSXtKxX7iBgI8nKaj2EYpqeAGJ1JxSciRKa1Y10q3dPq6DpcV6R1qM12XH+E5mUYhukJ60zr5fmkpV3gCMRv87qkHb/cZpeUTOt0uj9qpUQ6foolhmGYbikk0xkqOg0zrYe9U4enPI2+jtq8kT0LCesuab8hKyasX9N8DMMwUyaftP8fFZyG8CTtP5VSaf1EGT0CPMyv0H2HDbzT+2gehmGYKVHr798LxEe1uPlOEL/MTA1Fq/WPPBX2+YDiOALbunrhImmECcMwTNcUk+nvUrEBQdwGXuEluPgRTT+dlPoGP0GPJWylpK1fTY1hGKYTsAdWMdnBVhDA79C0M0H+zCv2KcSMQIHjuh9DdWg+hmGYjimAlxcRmKS1o5hcLM84PIPEBUfjYkxrTUs95RrDMEy7uH2LXyumrWqKX6XQN3wwTbcrgOO5m4pf/Ri3lVPp19D0DMMwHVEKeX/gWa3Kpy5tb2bwGSCfGjyeil9g5T77BJqeYRimbUDwDgMx2Y6Ckk+m/4RTVNE0u5JaDYfk2bdS8fMt7a//zDAM0w1F0/oFTngAf5eWvvbj1ssk7gJ0U/HD70+snNevXwuGYRhGx5rTLnp6wbSKICQX0227E7W+gb0LmpXoytM0JI9hmDkOztwM4ncK/X13BGedKagWYjetY2hahmGYlrh9A/Frw+5G4AwwBTlOEarBg7skTpFhGGZGKSXt46gAgi2h6RiGYeYcNcPAhdnviQhgwrqJpmMYhpmTFJN2KlIFTtrraBqGYZg5yeoTlzwNRO/BkAju4JXiGIZ50lBI2l8Me4G8YDrDME8awAPct2BabiCAOHUWTcMwDDNnKfYNvhervyiA+YR1Et3OMAwzZ1nR379XKWnfJwTQtL5HtzMMw8xpin1Db8blOUEIL6DbGIZh5jyFlH1JwbQs+jvDMMycZ/KM4efNlvHMTPf8HxYP62jDIPCkAAAAAElFTkSuQmCC';
-    return '<div class="head"><img class="logo" src="'+logo+'" alt="Casa de David"><div class="title"><h1>'+safe(title)+'</h1><p>Moviment’ Up — Casa de David</p></div></div><div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(date)+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(prof)+'</span></div>';
+    return '<div class="head"><div class="title"><h1>'+safe(title)+'</h1><p>Moviment’ Up — Casa de David</p></div></div><div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(date)+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(prof)+'</span></div>';
   }
-
   function strengthBody(p,plan,onlyDay){
     let days=onlyDay?[onlyDay]:['A','B','C','D','E'];
     let h=header(onlyDay?'FICHA DE TREINO — TREINO '+onlyDay:'FICHA DE TREINAMENTO RESISTIDO',p,plan);
@@ -6531,201 +6406,6 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   }else{
     setTimeout(function(){wireAge();wireDeleteButtons();auditButtons();},0);
   }
-})();
-</script>
-
-<script id="moviment-up-central-patient-final-fix">
-(function(){
-  'use strict';
-
-  const STORAGE_KEY='casa_david_moviment_up_v1';
-  const $=id=>document.getElementById(id);
-  const val=id=>$(id)?.value??'';
-  const setv=(id,v)=>{if($(id))$(id).value=v??''};
-
-  function patientById(pid){
-    return (window.db?.patients||[]).find(p=>p&&!p.deleted&&String(p.id)===String(pid))||null;
-  }
-  function ageFromBirth(birth){
-    if(!birth)return null;
-    const s=String(birth).slice(0,10), parts=s.split('-').map(Number);
-    if(parts.length!==3||parts.some(x=>!Number.isFinite(x)))return null;
-    const [y,m,d]=parts, now=new Date();
-    let a=now.getFullYear()-y;
-    if(now.getMonth()+1<m || (now.getMonth()+1===m&&now.getDate()<d))a--;
-    return a>=0?a:null;
-  }
-  function escLocal(v){
-    return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-  }
-  function syncLocalVerification(pid){
-    try{
-      const raw=localStorage.getItem(STORAGE_KEY);
-      const d=raw?JSON.parse(raw):null;
-      return !!d?.patients?.some(p=>p&&!p.deleted&&String(p.id)===String(pid));
-    }catch(e){return false}
-  }
-
-  /* ID central do paciente. */
-  window.getPatientByIdV19=function(pid){return patientById(pid)};
-  window.getActivePatientV19=function(){
-    const pid=window.activePatientId||$('aPatient')?.value||$('rPatient')?.value||$('tPatient')?.value||'';
-    return patientById(pid);
-  };
-
-  /* EDITAR: captura o clique antes de qualquer onclick legado. */
-  document.addEventListener('click',function(ev){
-    const btn=ev.target.closest('#patientTable button');
-    if(btn && /editar\s+cadastro/i.test(btn.textContent||'')){
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      const onclick=btn.getAttribute('onclick')||'';
-      const dataId=btn.getAttribute('data-edit-patient')||((onclick.match(/editPatientClinical\(['"]([^'"]+)['"]\)/)||[])[1]||'');
-      if(dataId && typeof window.editPatientClinical==='function')window.editPatientClinical(dataId);
-      return;
-    }
-
-    const save=ev.target.closest('#patients button');
-    if(save && /salvar\s+paciente/i.test(save.textContent||'')){
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      if(typeof window.calcPatientAge==='function')window.calcPatientAge();
-      if(typeof window.savePatient==='function')window.savePatient();
-      return;
-    }
-
-    const nav=ev.target.closest('#nav button');
-    if(nav && /^cadastro$/i.test((nav.textContent||'').replace(/[^\p{L}\s]/gu,'').trim())){
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      if(typeof window.show==='function')window.show('patients');
-    }
-  },true);
-
-  /* Sempre que a tabela for redesenhada, os botões continuam funcionando. */
-  const oldRender=window.renderPatients;
-  if(typeof oldRender==='function'&&!window.__centralPatientRenderWrapped){
-    window.__centralPatientRenderWrapped=true;
-    window.renderPatients=function(){
-      const r=oldRender.apply(this,arguments);
-      return r;
-    };
-  }
-
-  /* Identidade central completa na aba Avaliação, usando o mesmo ID. */
-  function refreshCentralAssessmentIdentity(){
-    const select=$('aPatient');
-    const pid=select?.value||window.activePatientId||'';
-    const p=patientById(pid);
-    let box=$('centralPatientIdentity');
-    const anchor=select?.closest('.grid');
-    if(!anchor)return;
-    if(!box){
-      box=document.createElement('div');
-      box.id='centralPatientIdentity';
-      box.className='assessment-choice';
-      anchor.insertAdjacentElement('afterend',box);
-    }
-    if(!p){
-      box.classList.add('hidden');
-      box.innerHTML='';
-      return;
-    }
-    box.classList.remove('hidden');
-    const age=ageFromBirth(p.birth);
-    box.innerHTML='<b>Paciente selecionado — cadastro central</b><div class="small" style="margin-top:6px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 12px">'+
-      '<span><b>Nome:</b> '+escLocal(p.name||'—')+'</span>'+
-      '<span><b>Nascimento:</b> '+escLocal(p.birth||'—')+'</span>'+
-      '<span><b>Idade:</b> '+(age!=null?age+' anos':'—')+'</span>'+
-      '<span><b>Sexo:</b> '+escLocal(p.sex||'—')+'</span>'+
-      '<span><b>Unidade:</b> '+escLocal(p.unit||p.unidade||'—')+'</span>'+
-      '<span><b>Diagnóstico:</b> '+escLocal(p.diagnosis||'—')+'</span>'+
-      '</div>';
-    try{
-      const cardioAge=$('assessmentAgeBtn')?.querySelector('strong');
-      if(cardioAge)cardioAge.textContent=age!=null?age+' anos':'Não cadastrada';
-      const cardioSex=$('assessmentSexBtn')?.querySelector('strong');
-      if(cardioSex)cardioSex.textContent=p.sex||'Não cadastrado';
-    }catch(_){}
-  }
-  window.refreshCentralAssessmentIdentity=refreshCentralAssessmentIdentity;
-
-  function wireAssessment(){
-    const s=$('aPatient');
-    if(s&&!s.dataset.centralPatientWired){
-      s.dataset.centralPatientWired='1';
-      s.addEventListener('change',function(){
-        const pid=s.value;
-        if(pid){
-          window.activePatientId=String(pid);
-          try{localStorage.setItem('casa_david_moviment_up_active_patient_v1',String(pid))}catch(_){}
-          const p=patientById(pid);
-          if(p){
-            const age=ageFromBirth(p.birth);
-            /* Nunca cria cópia: apenas mostra os dados do cadastro central. */
-            refreshCentralAssessmentIdentity();
-            if(typeof window.refreshAssessmentPatientIdentity==='function')window.refreshAssessmentPatientIdentity();
-            if($('aFcMaxCalc')&&age!=null&&p.sex) $('aFcMaxCalc').value=Math.round(208-(0.7*age));
-          }
-        }
-      });
-    }
-    refreshCentralAssessmentIdentity();
-  }
-
-  const oldShow=window.show;
-  if(typeof oldShow==='function'&&!window.__centralPatientShowWrapped){
-    window.__centralPatientShowWrapped=true;
-    window.show=function(id){
-      const r=oldShow.apply(this,arguments);
-      if(id==='assessment')setTimeout(wireAssessment,0);
-      if(id==='patients')setTimeout(()=>{try{window.renderPatients?.()}catch(_){}},0);
-      if(id==='report')setTimeout(()=>{
-        const pid=window.activePatientId||$('aPatient')?.value||'';
-        if(pid&&$('rPatient')){
-          $('rPatient').value=String(pid);
-          try{window.renderReport?.()}catch(_){}
-        }
-      },0);
-      return r;
-    };
-  }
-
-  /* Idade em todas as áreas que exibem dados gerais. */
-  function refreshPatientAgeEverywhere(){
-    const pid=window.activePatientId||$('aPatient')?.value||$('rPatient')?.value||$('tPatient')?.value||'';
-    const p=patientById(pid);
-    if(!p)return;
-    const age=ageFromBirth(p.birth);
-    if(age!=null)p.age=age;
-    if($('pBirth')?.value) setv('pAge',age!=null?age+' anos':'');
-    refreshCentralAssessmentIdentity();
-  }
-
-  /* PDF/Relatório: garantir que a seleção use o ID central e que a idade
-     venha da data de nascimento antes da geração. */
-  const oldPDF=window.generatePatientPDF;
-  if(typeof oldPDF==='function'&&!window.__centralPatientPDFWrapped){
-    window.__centralPatientPDFWrapped=true;
-    window.generatePatientPDF=function(){
-      const pid=$('rPatient')?.value||window.activePatientId||$('aPatient')?.value||'';
-      const p=patientById(pid);
-      if(!p){alert('Paciente não encontrado pelo ID cadastrado.');return}
-      const age=ageFromBirth(p.birth);if(age!=null)p.age=age;
-      if($('rPatient'))$('rPatient').value=String(p.id);
-      try{if(typeof window.persist==='function')window.persist()}catch(_){}
-      return oldPDF.apply(this,arguments);
-    };
-  }
-
-  function init(){
-    wireAssessment();
-    refreshPatientAgeEverywhere();
-  }
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);
-  else setTimeout(init,0);
-  setTimeout(init,500);
-  setTimeout(init,1200);
 })();
 </script>
 </body>
