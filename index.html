@@ -811,7 +811,7 @@ nav#nav{
 </header>
 <nav id="nav">
   <button class="nav-active" onclick="show('dashboard')"><span>⌂</span> Início</button>
-  <button onclick="show('patients')" class="nav-patients"><span>♟</span> Cadastro do Paciente</button>
+  <button type="button" id="navPatientsV19" onclick="window.show('patients')" class="nav-patients"><span>♟</span> Cadastro do Paciente</button>
   <button onclick="show('assessment')"><span>♙</span> Avaliação</button>
   <button onclick="show('history')"><span>▣</span> Histórico / Evolução</button>
   <button onclick="show('training')"><span>♮</span> Prescrição de Exercício</button>
@@ -894,7 +894,7 @@ nav#nav{
 <label id="pOtherWrap" class="hidden">Especifique outro diagnóstico
 <input id="pOtherDiag" placeholder="Digite o diagnóstico"></label>
 <label>Observações<textarea id="pObs"></textarea></label>
-</div><div class="actions"><button type="button" class="btn" onclick="savePatient()">Salvar paciente</button><button class="btn secondary" onclick="clearPatient()">Limpar</button></div>
+</div><div class="actions"><button type="button" class="btn" id="savePatientBtnV19" onclick="window.savePatient()">Salvar paciente</button><button class="btn secondary" onclick="clearPatient()">Limpar</button></div>
 <div id="patientMsg"></div>
 </div>
 <div class="card"><h3>Pacientes cadastrados</h3><div id="patientTable"></div></div>
@@ -2375,23 +2375,94 @@ document.getElementById('patientAssessmentsModal')?.addEventListener('click',e=>
 
   const originalSavePatient=window.savePatient;
   window.savePatient=function(){
-    const name=val('pName').trim(); if(!name){e('patientMsg').innerHTML='<div class="notice danger">Informe o nome do paciente.</div>';e('pName').focus();return}
-    const existing=currentPatientEditId?db.patients.find(x=>x.id===currentPatientEditId):null;
-    const functional=(window.__functionalRecords||[]).map(normalizeRecord);
-    const diagnoses=(window.__diagnosisRecords||[]).map(normalizeRecord);
-    const tea=functional.find(x=>x.name==='Autismo / TEA');
-    const data={
-      name,internalId:val('pId').trim(),birth:val('pBirth'),age:calcAgeFromBirth(val('pBirth')),sex:val('pSex'),unit:val('pUnit'),supportLevel:val('pSupport'),obs:val('pObs').trim(),
-      functionalConditions:functional,diagnosisRecords:diagnoses,deficiency:functional.map(x=>x.name),diagnoses:diagnoses.map(x=>x.name),
-      diagnosis:diagnoses[0]?.name||functional[0]?.name||'',diagnosisDetail:tea?.classification||functional[0]?.classification||'',otherDiagnosis:'',
-      updatedAt:new Date().toISOString()
-    };
-    if(existing){Object.assign(existing,data); if(!existing.createdAt)existing.createdAt=new Date().toISOString();}
-    else db.patients.push({id:uid('p'),...data,createdAt:new Date().toISOString()});
-    if(!persist())return;
-    const msg=existing?'Paciente atualizado com sucesso.':'Paciente salvo com sucesso.';
-    e('patientMsg').innerHTML='<div class="notice success">'+msg+' As condições e diagnósticos permanecem vinculados ao paciente.</div>';
-    currentPatientEditId=existing?.id||null; renderPatientsEnhanced(); populateSelects();
+    try{
+      const name=val('pName').trim();
+      const msg=e('patientMsg');
+      if(!name){
+        if(msg)msg.innerHTML='<div class="notice danger">Informe o nome do paciente.</div>';
+        e('pName')?.focus();
+        return false;
+      }
+      const editId=currentPatientEditId?String(currentPatientEditId):'';
+      const existing=editId?(db.patients||[]).find(x=>x&&String(x.id)===editId):null;
+      const functional=(window.__functionalRecords||[]).map(normalizeRecord).filter(x=>x.name);
+      const diagnoses=(window.__diagnosisRecords||[]).map(normalizeRecord).filter(x=>x.name);
+      const birth=val('pBirth');
+      const calculatedAge=calcAgeFromBirth(birth);
+
+      // No UPDATE, somente substitui um campo quando existe valor novo.
+      // Campos já gravados nunca são apagados por inputs vazios.
+      const data={
+        name:name,
+        internalId:val('pId').trim(),
+        birth:birth,
+        age:calculatedAge,
+        sex:val('pSex'),
+        unit:val('pUnit'),
+        supportLevel:val('pSupport'),
+        obs:val('pObs').trim(),
+        updatedAt:new Date().toISOString()
+      };
+
+      const legacyDiag=val('pDiag');
+      const legacyDetail=val('pDiagDetail');
+      const legacyOther=val('pOtherDiag').trim();
+      if(legacyDiag)data.diagnosis=legacyDiag;
+      if(legacyDetail)data.diagnosisDetail=legacyDetail;
+      if(legacyOther)data.otherDiagnosis=legacyOther;
+
+      if(functional.length){
+        data.functionalConditions=functional;
+        data.deficiency=functional.map(x=>x.name);
+      }else if(!existing){
+        data.functionalConditions=[];
+        data.deficiency=[];
+      }
+      if(diagnoses.length){
+        data.diagnosisRecords=diagnoses;
+        data.diagnoses=diagnoses.map(x=>x.name);
+        if(!data.diagnosis)data.diagnosis=diagnoses[0].name;
+        if(!data.diagnosisDetail && diagnoses[0].classification)data.diagnosisDetail=diagnoses[0].classification;
+      }else if(!existing){
+        data.diagnosisRecords=[];
+        data.diagnoses=[];
+      }
+
+      let savedId=editId;
+      if(existing){
+        // ID é imutável e todos os campos existentes são preservados.
+        Object.keys(data).forEach(k=>{
+          const v=data[k];
+          if(k==='updatedAt'){existing[k]=v;return;}
+          if(v!==null&&v!==undefined&&String(v)!=='')existing[k]=v;
+        });
+        if(calculatedAge==null && existing.age==null)existing.age=ageFromBirth(existing.birth);
+        savedId=String(existing.id);
+      }else{
+        savedId=uid('p');
+        db.patients.push({id:savedId,...data,createdAt:new Date().toISOString()});
+      }
+
+      const ok=typeof window.persist==='function'?window.persist():persist();
+      if(!ok){
+        if(msg&&!msg.innerHTML)msg.innerHTML='<div class="notice danger">Não foi possível salvar o cadastro.</div>';
+        return false;
+      }
+
+      currentPatientEditId=savedId;
+      window.activePatientId=savedId;
+      try{localStorage.setItem('casa_david_moviment_up_active_patient_v1',savedId)}catch(_){ }
+      if(typeof renderPatients==='function')renderPatients();
+      if(typeof populateSelects==='function')populateSelects();
+      if(typeof refreshPatientAges==='function')refreshPatientAges();
+      if(msg)msg.innerHTML='<div class="notice success">'+(existing?'Paciente atualizado com sucesso.':'Paciente salvo com sucesso.')+' Todos os dados permanecem vinculados ao mesmo ID.</div>';
+      return true;
+    }catch(err){
+      console.error('V19 — erro ao salvar cadastro:',err);
+      const msg=e('patientMsg');
+      if(msg)msg.innerHTML='<div class="notice danger">Erro ao salvar o cadastro. Verifique os campos e tente novamente.</div>';
+      return false;
+    }
   };
   window.editPatientClinical=function(pid){
     const p=db.patients.find(x=>x.id===pid);if(!p)return;currentPatientEditId=pid;
@@ -6683,6 +6754,36 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
       console.error('Moviment Up V19: código de geração de ficha apareceu como texto no BODY. Verificar publicação do HTML.');
     }
   }catch(e){}
+})();
+</script>
+
+<script id="moviment-up-v19-final-ui-guard">
+(function(){
+  'use strict';
+  function byId(id){return document.getElementById(id)}
+  function openCadastro(e){
+    if(e){e.preventDefault();e.stopPropagation()}
+    try{ if(typeof window.show==='function')window.show('patients'); }
+    catch(err){ console.error('V19: não foi possível abrir Cadastro do Paciente',err); }
+    return false;
+  }
+  function wire(){
+    var nav=byId('navPatientsV19');
+    if(nav&&!nav.dataset.v19wired){nav.dataset.v19wired='1';nav.addEventListener('click',openCadastro,false)}
+    var save=byId('savePatientBtnV19');
+    if(save&&!save.dataset.v19wired){
+      save.dataset.v19wired='1';
+      save.onclick=function(ev){
+        if(ev){ev.preventDefault();ev.stopPropagation()}
+        try{return !!window.savePatient()}catch(err){console.error('V19: erro no botão Salvar paciente',err);return false}
+      };
+    }
+    // Idade sempre deriva da data de nascimento.
+    var birth=byId('pBirth');
+    if(birth&&!birth.dataset.v19agewired){birth.dataset.v19agewired='1';birth.addEventListener('change',function(){try{if(typeof window.calcPatientAge==='function')window.calcPatientAge()}catch(e){}})}
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',wire);else wire();
+  setTimeout(wire,300);setTimeout(wire,1200);
 })();
 </script>
 </body>
