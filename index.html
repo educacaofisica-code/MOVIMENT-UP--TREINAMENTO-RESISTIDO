@@ -894,7 +894,7 @@ nav#nav{
 <label id="pOtherWrap" class="hidden">Especifique outro diagnóstico
 <input id="pOtherDiag" placeholder="Digite o diagnóstico"></label>
 <label>Observações<textarea id="pObs"></textarea></label>
-</div><div class="actions"><button class="btn" onclick="savePatient()">Salvar paciente</button><button class="btn secondary" onclick="clearPatient()">Limpar</button></div>
+</div><div class="actions"><button type="button" class="btn" onclick="savePatient()">Salvar paciente</button><button class="btn secondary" onclick="clearPatient()">Limpar</button></div>
 <div id="patientMsg"></div>
 </div>
 <div class="card"><h3>Pacientes cadastrados</h3><div id="patientTable"></div></div>
@@ -6284,7 +6284,7 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   window.savePatient=function(){
     const name=STR(S('pName'));
     if(!name){if($('patientMsg'))$('patientMsg').innerHTML='<div class="notice danger">Informe o nome do paciente.</div>';$('pName')?.focus();return;}
-    const editId=(typeof currentPatientEditId!=='undefined'&&currentPatientEditId)?String(currentPatientEditId):'';
+    const editId=window.__v19CurrentPatientEditId?String(window.__v19CurrentPatientEditId):'';
     const existing=editId?pById(editId):null;
     const data=patientFormData(existing);
     let p;
@@ -6317,14 +6317,14 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
     if(typeof updateCounts==='function')updateCounts();
     if(typeof calcPatientAge==='function')calcPatientAge();
     if($('patientMsg'))$('patientMsg').innerHTML='<div class="notice success">'+(existing?'Paciente atualizado':'Paciente salvo')+' com sucesso. Todos os dados foram preservados no mesmo ID.</div>';
-    if(typeof currentPatientEditId!=='undefined')currentPatientEditId=String(p.id);
+    window.__v19CurrentPatientEditId=String(p.id);
     // Sincronização já existente da V19 detectará o paciente pelo ID/updatedAt.
     if(typeof window.__movimentUpSetStatus==='function' && navigator.onLine)window.__movimentUpSetStatus('syncing','ONLINE • cadastro salvo; sincronizando...');
   };
 
   window.editPatientClinical=function(pid){
     const p=pById(pid);if(!p)return;
-    if(typeof currentPatientEditId!=='undefined')currentPatientEditId=String(p.id);
+    window.__v19CurrentPatientEditId=String(p.id);
     SV('pName',p.name);SV('pId',p.internalId||'');SV('pBirth',p.birth||'');
     const age=ageFromBirth(p.birth);
     SV('pAge',age!=null?age+' anos':(p.age!=null?p.age+' anos':''));
@@ -6484,6 +6484,18 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   });
   window.addEventListener('pageshow',()=>setTimeout(refreshPatientAges,80));
 })();
+
+  if(!window.__v19CurrentPatientEditId)window.__v19CurrentPatientEditId='';
+  document.addEventListener('click',function(ev){
+    const btn=ev.target&&ev.target.closest?ev.target.closest('button[onclick=\"savePatient()\"]'):null;
+    if(!btn)return;
+    ev.preventDefault(); ev.stopImmediatePropagation();
+    try{window.savePatient();}catch(err){
+      console.error('MOVIMENT UP — erro ao salvar cadastro:',err);
+      const msg=document.getElementById('patientMsg');
+      if(msg)msg.innerHTML='<div class=\"notice danger\">Não foi possível salvar o cadastro. Verifique os campos e tente novamente.</div>';
+    }
+  },true);
 </script>
 
 
