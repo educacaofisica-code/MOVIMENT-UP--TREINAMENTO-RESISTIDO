@@ -6121,48 +6121,41 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
     return {p,plan};
   }
   function safe(v){return esc(v==null||v===''?'—':String(v));}
+  function getLogoSrc(){
+    const el=document.querySelector('.brand-logo')||document.querySelector('.print-logo')||document.querySelector('.report-logo')||document.querySelector('.logo img');
+    return el?.getAttribute('src')||el?.src||'';
+  }
   function openSheet(title,body){
     const w=window.open('','_blank','width=1000,height=800');
     if(!w){alert('O navegador bloqueou a janela da ficha. Permita pop-ups para esta plataforma.');return;}
+    const css=`@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;background:#fff;font-size:11px}.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}.logo{width:145px;height:58px;object-fit:contain}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.title p{margin:0;font-size:10px;color:#566873}.patient{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:7px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px;margin-bottom:12px}.patient b{display:block;font-size:9px;color:#66777e;text-transform:uppercase}.patient span{font-weight:700;font-size:11px}h2{font-size:14px;color:#0753aa;margin:13px 0 7px;border-bottom:1px solid #dbe5eb;padding-bottom:4px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:8px}.field{border:1px solid #dce5ea;border-radius:6px;padding:7px;min-height:27px}.field b{display:block;font-size:8px;color:#687a83;text-transform:uppercase;margin-bottom:3px}.field span{font-weight:700}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.exercise-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;margin-bottom:6px}.exercise-data{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.mini{background:#f7fafb;border-radius:5px;padding:5px}.mini b{display:block;font-size:8px;color:#687a83}.mini span{font-weight:700}.obs{margin-top:5px;font-size:9px;color:#4e626b}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}.no-print{margin-bottom:12px}@media print{.no-print{display:none}.exercise{break-inside:avoid}}`;
+    const logo=getLogoSrc();
+    const logoHtml=logo?'<img class="logo" src="'+safe(logo)+'" alt="Casa de David">':'';
     w.document.open();
-    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+safe(title)+'</title><style>'+`
-      @page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#17324d;margin:0;background:#fff;font-size:11px}
-      .head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0753aa;padding-bottom:10px;margin-bottom:12px}
-      .logo{max-width:145px;max-height:58px;object-fit:contain}.title{flex:1}.title h1{font-size:19px;margin:0 0 4px;color:#0753aa}.title p{margin:0;font-size:10px;color:#566873}
-      .patient{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:7px;background:#f4f8fb;border:1px solid #d8e3ea;padding:9px;border-radius:7px;margin-bottom:12px}.patient b{display:block;font-size:9px;color:#66777e;text-transform:uppercase}.patient span{font-weight:700;font-size:11px}
-      h2{font-size:14px;color:#0753aa;margin:13px 0 7px;border-bottom:1px solid #dbe5eb;padding-bottom:4px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:8px}.field{border:1px solid #dce5ea;border-radius:6px;padding:7px;min-height:27px}.field b{display:block;font-size:8px;color:#687a83;text-transform:uppercase;margin-bottom:3px}.field span{font-weight:700}.exercise{border:1px solid #d7e2e8;border-radius:7px;margin:7px 0;padding:8px;page-break-inside:avoid}.exercise-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;margin-bottom:6px}.exercise-data{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.mini{background:#f7fafb;border-radius:5px;padding:5px}.mini b{display:block;font-size:8px;color:#687a83}.mini span{font-weight:700}.obs{margin-top:5px;font-size:9px;color:#4e626b}.footer{margin-top:16px;border-top:1px solid #dce5ea;padding-top:7px;font-size:9px;color:#66777e}.no-print{margin-bottom:12px}@media print{.no-print{display:none}.exercise{break-inside:avoid}}
-    `+'</style></head><body><div class="no-print"><button onclick="window.print()" style="padding:8px 14px;font-weight:700">Imprimir / Salvar como PDF</button><button onclick="window.close()" style="padding:8px 14px;margin-left:6px">Fechar</button></div>'+body+'<div class="footer">Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David. Ficha gerada a partir da prescrição registrada no sistema.</div></body></html>');
-    w.document.close();w.focus();
+    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+safe(title)+'</title></head><body></body></html>');
+    w.document.close();
+    const style=w.document.createElement('style'); style.textContent=css; w.document.head.appendChild(style);
+    const controls=w.document.createElement('div'); controls.className='no-print'; controls.innerHTML='<button style="padding:8px 14px;font-weight:700">Imprimir / Salvar como PDF</button><button style="padding:8px 14px;margin-left:6px">Fechar</button>';
+    controls.children[0].onclick=()=>w.print(); controls.children[1].onclick=()=>w.close();
+    const content=w.document.createElement('div'); content.innerHTML=logoHtml+body;
+    const footer=w.document.createElement('div'); footer.className='footer'; footer.textContent='Moviment’ Up — Treinamento Resistido Inclusivo | Casa de David. Ficha gerada a partir da prescrição registrada no sistema.';
+    w.document.body.appendChild(controls); w.document.body.appendChild(content); w.document.body.appendChild(footer);
+    w.focus();
   }
   function header(title,p,plan){
     const prof=plan.professor||'—', date=plan.date?formatDate(plan.date):'—';
-    /* Usa o mesmo logo institucional já exibido na plataforma. Como a ficha é aberta
-       em uma nova janela, o src é copiado para dentro do HTML da impressão. */
-    const logoEl=document.querySelector('.brand-logo')||document.querySelector('.logo img');
-    const logoSrc=logoEl?.src||'';
-    const logoHtml=logoSrc?'<img class="logo" src="'+safe(logoSrc)+'" alt="Casa de David">':'';
-    return '<div class="head">'+logoHtml+'<div class="title"><h1>'+safe(title)+'</h1><p>Moviment’ Up — Casa de David</p></div></div><div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(date)+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(prof)+'</span></div>';
+    return '<div class="head"><div class="title"><h1>'+safe(title)+'</h1><p>Moviment’ Up — Casa de David</p></div></div><div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(date)+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(prof)+'</span></div>';
   }
   function strengthBody(p,plan,onlyDay){
     let days=onlyDay?[onlyDay]:['A','B','C','D','E'];
     let h=header(onlyDay?'FICHA DE TREINO — TREINO '+onlyDay:'FICHA DE TREINAMENTO RESISTIDO',p,plan);
-    if(plan.objectives?.length) h+='<h2>Objetivos</h2><div class="field"><span>'+plan.objectives.map(safe).join(' • ')+'</span></div>';
-    days.forEach(d=>{
-      const arr=plan.strength?.[d]||[];
-      h+='<h2>TREINO '+d+'</h2>';
-      if(!arr.length){h+='<div class="field"><span>Nenhum exercício prescrito.</span></div>';return;}
-      arr.forEach((ex,i)=>{
-        h+='<div class="exercise"><div class="exercise-head"><b>'+((i+1)+'. '+safe(ex.name))+'</b><span>Regulagem: '+safe(ex.reg?.A)+' / '+safe(ex.reg?.F)+' / '+safe(ex.reg?.D)+' / '+safe(ex.reg?.E)+' / '+safe(ex.reg?.B)+'</span></div><div class="exercise-data"><div class="mini"><b>Carga (kg)</b><span>'+safe(ex.load)+'</span></div><div class="mini"><b>Séries</b><span>'+safe(ex.sets)+'</span></div><div class="mini"><b>Repetições</b><span>'+safe(ex.reps)+'</span></div><div class="mini"><b>Intervalo (s)</b><span>'+safe(ex.interval)+'</span></div><div class="mini"><b>Observação</b><span>'+safe(ex.obs)+'</span></div></div></div>';
-      });
-    });
+    if(plan.objectives?.length)h+='<h2>Objetivos</h2><div class="field"><span>'+plan.objectives.map(safe).join(' • ')+'</span></div>';
+    days.forEach(d=>{const arr=plan.strength?.[d]||[];h+='<h2>TREINO '+d+'</h2>';if(!arr.length){h+='<div class="field"><span>Nenhum exercício prescrito.</span></div>';return;}arr.forEach((ex,i)=>{h+='<div class="exercise"><div class="exercise-head"><b>'+((i+1)+'. '+safe(ex.name))+'</b><span>Regulagem: '+safe(ex.reg?.A)+' / '+safe(ex.reg?.F)+' / '+safe(ex.reg?.D)+' / '+safe(ex.reg?.E)+' / '+safe(ex.reg?.B)+'</span></div><div class="exercise-data"><div class="mini"><b>Carga (kg)</b><span>'+safe(ex.load)+'</span></div><div class="mini"><b>Séries</b><span>'+safe(ex.sets)+'</span></div><div class="mini"><b>Repetições</b><span>'+safe(ex.reps)+'</span></div><div class="mini"><b>Intervalo (s)</b><span>'+safe(ex.interval)+'</span></div><div class="mini"><b>Observação</b><span>'+safe(ex.obs)+'</span></div></div></div>';});});
     return h;
   }
   function aerobicBody(p,plan){
-    const a=plan.aerobic||{};
-    let h=header('FICHA DE TREINAMENTO AERÓBICO',p,plan);
-    h+='<h2>Prescrição</h2><div class="grid">'+[
-      ['Modalidade',a.modality],['Frequência semanal',a.frequency!=null?a.frequency+' vezes/semana':null],['Duração',a.duration!=null?a.duration+' min':null],['Intensidade',a.intensity],['Objetivo',a.objective],['FCmáx estimada',a.fcMax],['FC repouso',a.fcRest],['FC reserva',a.fcReserve],['FC-alvo',a.fcTarget],['Velocidade',a.speed!=null?a.speed+' km/h':null],['Distância',a.distance!=null?a.distance+' km':null],['Carga / resistência',a.resistance],['Nível',a.level]
-    ].map(x=>'<div class="field"><b>'+safe(x[0])+'</b><span>'+safe(x[1])+'</span></div>').join('')+'</div>';
+    const a=plan.aerobic||{};let h=header('FICHA DE TREINAMENTO AERÓBICO',p,plan);
+    h+='<h2>Prescrição</h2><div class="grid">'+[['Modalidade',a.modality],['Frequência semanal',a.frequency!=null?a.frequency+' vezes/semana':null],['Duração',a.duration!=null?a.duration+' min':null],['Intensidade',a.intensity],['Objetivo',a.objective],['FCmáx estimada',a.fcMax],['FC repouso',a.fcRest],['FC reserva',a.fcReserve],['FC-alvo',a.fcTarget],['Velocidade',a.speed!=null?a.speed+' km/h':null],['Distância',a.distance!=null?a.distance+' km':null],['Carga / resistência',a.resistance],['Nível',a.level]].map(x=>'<div class="field"><b>'+safe(x[0])+'</b><span>'+safe(x[1])+'</span></div>').join('')+'</div>';
     if((a.functionalParts||[]).length)h+='<div class="field"><b>Treino funcional</b><span>'+a.functionalParts.map(safe).join(' • ')+'</span></div>';
     if(a.obs)h+='<div class="field" style="margin-top:8px"><b>Observações</b><span>'+safe(a.obs).replace(/\n/g,'<br>')+'</span></div>';
     return h;
