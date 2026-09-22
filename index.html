@@ -1284,7 +1284,7 @@ function show(id){
   if(id==='attendance'){ if(typeof addUI==='function') addUI(); if(typeof v41RenderAll==='function') v41RenderAll(); if(typeof loadAttendancePatient==='function') loadAttendancePatient(); }
   if(id==='report'){populateSelects();renderReport()}
 }
-function updateCounts(){document.getElementById('kPatients').textContent=(typeof uniquePatients==='function'?uniquePatients():db.patients.filter(p=>!p?.deleted&&!p?.is_deleted)).length;document.getElementById('kAssess').textContent=db.assessments.length;document.getElementById('kTrain').textContent=db.training.length}
+function updateCounts(){document.getElementById('kPatients').textContent=db.patients.length;document.getElementById('kAssess').textContent=db.assessments.length;document.getElementById('kTrain').textContent=db.training.length}
 /* ==================== PACIENTES — FONTE ÚNICA E SEM DUPLICIDADE ====================
    As listas "Escolher paciente" usam SOMENTE db.patients.
    Avaliações, histórico, treinos, prescrições e sugestões nunca entram na fonte.
@@ -2375,70 +2375,23 @@ document.getElementById('patientAssessmentsModal')?.addEventListener('click',e=>
 
   const originalSavePatient=window.savePatient;
   window.savePatient=function(){
-    const name=val('pName').trim();
-    if(!name){
-      e('patientMsg').innerHTML='<div class="notice danger">Informe o nome do paciente.</div>';
-      e('pName').focus(); return;
-    }
-    const existing=currentPatientEditId?db.patients.find(x=>String(x.id)===String(currentPatientEditId)):null;
+    const name=val('pName').trim(); if(!name){e('patientMsg').innerHTML='<div class="notice danger">Informe o nome do paciente.</div>';e('pName').focus();return}
+    const existing=currentPatientEditId?db.patients.find(x=>x.id===currentPatientEditId):null;
     const functional=(window.__functionalRecords||[]).map(normalizeRecord);
     const diagnoses=(window.__diagnosisRecords||[]).map(normalizeRecord);
     const tea=functional.find(x=>x.name==='Autismo / TEA');
-    const birth=val('pBirth');
     const data={
-      name,
-      internalId:val('pId').trim(),
-      birth,
-      age:calcAgeFromBirth(birth),
-      sex:val('pSex'),
-      unit:val('pUnit'),
-      supportLevel:val('pSupport'),
-      obs:val('pObs').trim(),
-      functionalConditions:functional,
-      diagnosisRecords:diagnoses,
-      deficiency:functional.map(x=>x.name),
-      diagnoses:diagnoses.map(x=>x.name),
-      diagnosis:diagnoses[0]?.name||functional[0]?.name||'',
-      diagnosisDetail:tea?.classification||functional[0]?.classification||'',
-      otherDiagnosis:val('pOtherDiag').trim()
+      name,internalId:val('pId').trim(),birth:val('pBirth'),age:calcAgeFromBirth(val('pBirth')),sex:val('pSex'),unit:val('pUnit'),supportLevel:val('pSupport'),obs:val('pObs').trim(),
+      functionalConditions:functional,diagnosisRecords:diagnoses,deficiency:functional.map(x=>x.name),diagnoses:diagnoses.map(x=>x.name),
+      diagnosis:diagnoses[0]?.name||functional[0]?.name||'',diagnosisDetail:tea?.classification||functional[0]?.classification||'',otherDiagnosis:'',
+      updatedAt:new Date().toISOString()
     };
-    const t=new Date().toISOString();
-
-    if(existing){
-      /* EDIÇÃO = UPDATE DO MESMO ID. Campos vazios do formulário não apagam
-         informações já salvas. Arrays clínicos só substituem quando o editor
-         realmente os carregou/alterou. */
-      const preserve=['internalId','birth','sex','unit','supportLevel','obs','diagnosis','diagnosisDetail','otherDiagnosis'];
-      Object.keys(data).forEach(k=>{
-        const v=data[k];
-        if(k==='age'){existing.age=v;return}
-        if(Array.isArray(v)){
-          if(v.length || !Array.isArray(existing[k])) existing[k]=v;
-          return;
-        }
-        if(v!==null&&v!==undefined&&String(v).trim()!=='') existing[k]=v;
-        else if(!preserve.includes(k)) existing[k]=v;
-      });
-      existing.id=String(existing.id);
-      existing.is_deleted=false; existing.deleted=false;
-      existing.deleted_at=null; existing.deletedAt=null;
-      existing.updatedAt=t; existing.updated_at=t;
-      if(!existing.createdAt)existing.createdAt=t;
-    }else{
-      const id=uid('p');
-      db.patients.push({
-        id,name,internalId:data.internalId,birth,age:data.age,sex:data.sex,unit:data.unit,
-        supportLevel:data.supportLevel,obs:data.obs,functionalConditions:functional,
-        diagnosisRecords:diagnoses,deficiency:data.deficiency,diagnoses:data.diagnoses,
-        diagnosis:data.diagnosis,diagnosisDetail:data.diagnosisDetail,otherDiagnosis:data.otherDiagnosis,
-        is_deleted:false,deleted:false,deleted_at:null,deletedAt:null,
-        createdAt:t,updatedAt:t,updated_at:t
-      });
-    }
+    if(existing){Object.assign(existing,data); if(!existing.createdAt)existing.createdAt=new Date().toISOString();}
+    else db.patients.push({id:uid('p'),...data,createdAt:new Date().toISOString()});
     if(!persist())return;
-    e('patientMsg').innerHTML='<div class="notice success">'+(existing?'Paciente atualizado com sucesso.':'Paciente salvo com sucesso.')+' Os dados foram preservados e vinculados ao mesmo ID.</div>';
-    currentPatientEditId=existing?.id||null;
-    renderPatientsEnhanced(); populateSelects();
+    const msg=existing?'Paciente atualizado com sucesso.':'Paciente salvo com sucesso.';
+    e('patientMsg').innerHTML='<div class="notice success">'+msg+' As condições e diagnósticos permanecem vinculados ao paciente.</div>';
+    currentPatientEditId=existing?.id||null; renderPatientsEnhanced(); populateSelects();
   };
   window.editPatientClinical=function(pid){
     const p=db.patients.find(x=>x.id===pid);if(!p)return;currentPatientEditId=pid;
@@ -3475,43 +3428,83 @@ const _saveAerobic=window.v41SaveAerobic;window.v41SaveAerobic=function(){if(win
 
   /* --- Patient deletion: remove the patient AND every record linked to the same patientId. --- */
   window.deletePatient=async function(pid){
-    const p=(db.patients||[]).find(x=>String(x.id)===String(pid));
-    if(!p)return;
-    const linkedTables=['assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations','aulas'];
+    const p=(db.patients||[]).find(x=>String(x.id)===String(pid)); if(!p)return;
+    const linkedTables=['assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
     const total=linkedTables.reduce((n,k)=>n+(Array.isArray(db[k])?db[k].filter(x=>String(x.patientId)===String(pid)).length:0),0);
-    if(!confirm(`APAGAR CADASTRO COMPLETO?\n\nPaciente: ${p.name}\n\nSerão ocultados o cadastro e ${total} registro(s) vinculado(s).\n\nA exclusão será sincronizada com o outro dispositivo.`))return;
+    if(!confirm(`APAGAR CADASTRO COMPLETO?\n\nPaciente: ${p.name}\n\nSerão excluídos o cadastro e ${total} registro(s) vinculado(s).\n\nEsta ação NÃO pode ser desfeita.`))return;
     if(!confirm(`CONFIRMA DEFINITIVAMENTE a exclusão de ${p.name}?`))return;
 
-    /* EXCLUSÃO = TOMBSTONE. Não apagar a linha do Supabase.
-       O registro continua existindo com is_deleted=true/deleted_at, para que
-       outro dispositivo não consiga recriá-lo a partir de cache antigo. */
-    const t=new Date().toISOString();
-    p.is_deleted=true;
-    p.deleted=true; /* compatibilidade com versões anteriores */
-    p.deleted_at=t;
-    p.deletedAt=t;
-    p.updatedAt=t;
-    p.updated_at=t;
-
-    linkedTables.forEach(k=>{
-      if(Array.isArray(db[k]))db[k]=db[k].filter(x=>String(x?.patientId)!==String(pid));
-    });
-    if(typeof currentTrainingPatientId!=='undefined'&&String(currentTrainingPatientId)===String(pid)){
-      currentTrainingPatientId='';currentTrainingPlan=null;
+    /*
+     * CORREÇÃO DEFINITIVA DO RETORNO PELA SINCRONIZAÇÃO:
+     * depois de confirmar, o paciente permanece localmente como TOMBSTONE
+     * (deleted=true). Assim, a sincronização da V9 consegue enviar a
+     * exclusão para o Supabase, em vez de deixar o outro dispositivo
+     * recriá-lo a partir de um cadastro antigo.
+     */
+    if(!navigator.onLine){
+      alert('Para excluir este cadastro com segurança nos dois dispositivos, conecte-se à internet e tente novamente.');
+      return;
     }
-    if(typeof currentPatientEditId!=='undefined'&&String(currentPatientEditId)===String(pid))currentPatientEditId=null;
+    if(typeof SUPABASE_URL==='undefined'||typeof SUPABASE_KEY==='undefined'){
+      alert('Não foi possível acessar o Supabase. O cadastro não foi apagado.');
+      return;
+    }
 
-    if(!persist())return;
-    ['tPatient','sPatient','aPatient','hPatient','rPatient','attPatient'].forEach(id=>{
-      const el=document.getElementById(id);if(el)el.value='';
-    });
-    if(typeof renderPatients==='function')renderPatients();
-    if(typeof renderSuggestionTab==='function')renderSuggestionTab();
-    if(typeof updateCounts==='function')updateCounts();
-    if(typeof populateSelects==='function')populateSelects();
+    const name=p.name;
+    try{
+      const hdr={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
 
-    window.__movimentUpSetStatus?.('syncing',navigator.onLine?'ONLINE • EXCLUSÃO PENDENTE DE CONFIRMAÇÃO':'OFFLINE • EXCLUSÃO SALVA LOCALMENTE');
-    alert(`Cadastro de ${p.name} marcado como excluído.\n\n${navigator.onLine?'A sincronização enviará a exclusão ao Supabase e ao outro dispositivo.':'A exclusão ficou pendente e será sincronizada quando a internet voltar.'}`);
+      /* Primeiro remove os registros vinculados do servidor. */
+      for(const table of linkedTables){
+        try{
+          const rr=await fetch(SUPABASE_URL+'/rest/v1/'+table+'?data->>patientId=eq.'+encodeURIComponent(String(pid)),{method:'DELETE',headers:hdr,cache:'no-store'});
+          if(!rr.ok)console.warn('Moviment Up: DELETE vinculado',table,rr.status);
+        }catch(e){console.warn('Moviment Up: DELETE vinculado',table,e)}
+      }
+
+      /* Remove a linha antiga do servidor. */
+      const r=await fetch(SUPABASE_URL+'/rest/v1/patients?id=eq.'+encodeURIComponent(String(pid)),{method:'DELETE',headers:hdr,cache:'no-store'});
+      if(!r.ok)throw new Error('DELETE patients '+r.status+' '+await r.text().catch(()=>''));
+
+      const check=await fetch(SUPABASE_URL+'/rest/v1/patients?id=eq.'+encodeURIComponent(String(pid))+'&select=id',{method:'GET',headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Cache-Control':'no-cache','Pragma':'no-cache'},cache:'no-store'});
+      const rows=check.ok?await check.json().catch(()=>[]):[];
+      if(!Array.isArray(rows)||rows.length!==0)throw new Error('Supabase não confirmou a exclusão');
+
+      /*
+       * NÃO remover fisicamente o paciente do db local.
+       * Marcá-lo como deleted faz com que stampChangedLocal() detecte a
+       * alteração e upsertPatients() grave o tombstone no Supabase.
+       * Isso impede que o cadastro antigo de outro aparelho volte.
+       */
+      const nowIso=new Date().toISOString();
+      p.deleted=true;
+      p.deletedAt=nowIso;
+      p.updatedAt=nowIso;
+
+      /* Os registros clínicos/treinos vinculados deixam de aparecer localmente. */
+      linkedTables.forEach(k=>{
+        if(Array.isArray(db[k]))db[k]=db[k].filter(x=>String(x.patientId)!==String(pid));
+      });
+
+      if(typeof currentTrainingPatientId!=='undefined'&&String(currentTrainingPatientId)===String(pid)){currentTrainingPatientId='';currentTrainingPlan=null}
+      if(typeof currentPatientEditId!=='undefined'&&String(currentPatientEditId)===String(pid))currentPatientEditId=null;
+
+      /* IMPORTANTE: persist(), e não localStorage.setItem direto.
+         O persist original aciona a sincronização já existente da V9. */
+      if(!persist())return;
+
+      ['tPatient','sPatient','aPatient','hPatient','rPatient'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
+      if(typeof renderPatients==='function')renderPatients();
+      if(typeof renderSuggestionTab==='function')renderSuggestionTab();
+      if(typeof updateCounts==='function')updateCounts();
+      if(typeof populateSelects==='function')populateSelects();
+
+      window.__movimentUpSetStatus?.('online','ONLINE • exclusão sincronizada');
+      alert(`Cadastro de ${name} apagado com sucesso.\n\nA exclusão foi registrada e não será recriada pela sincronização.`);
+    }catch(e){
+      console.error('Moviment Up: exclusão falhou',e);
+      alert('Não foi possível confirmar a exclusão no Supabase.\n\nO cadastro NÃO foi apagado.\n\nVerifique a internet e tente novamente.');
+    }
   };
 
   /* Replace the patient table only to add the complete-delete action. */
@@ -4963,90 +4956,37 @@ setTimeout(render,200);setTimeout(render,800);
 
 
 
-<script id="moviment-up-supabase-sync-v17">
+<script id="moviment-up-supabase-sync-v16">
 (function(){
   'use strict';
-  /* MOVIMENT' UP — SINCRONIZAÇÃO CENTRALIZADA V17
-     Uma única rotina. ID é a chave do paciente; updated_at resolve conflitos;
-     is_deleted/deleted_at impedem que exclusões retornem.
-     O localStorage continua funcionando offline. */
+
+  /* MOVIMENT' UP — sincronização bidirecional robusta.
+     O Supabase é a fonte compartilhada entre computador e tablet.
+     O localStorage continua sendo a base offline de cada dispositivo.
+     IMPORTANTE: na primeira sincronização desta versão, os dados remotos
+     são baixados antes de qualquer envio, evitando que os dados locais
+     antigos sobrescrevam os dados já existentes no Supabase. */
+
   const URL='https://rliqdzgeooekkskchjhz.supabase.co';
   const KEY='sb_publishable_e_8kwsxtECNu3poH0-JaBg_9nr8U9y9';
   const LOCAL_KEY='casa_david_moviment_up_v1';
-  const SNAP_KEY='casa_david_moviment_up_sync_snapshot_v17';
-  const TABLES=['patients','assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations','aulas'];
-  const CHILD_TABLES=TABLES.filter(t=>t!=='patients'&&t!=='assessments');
+  const SNAP_KEY='casa_david_moviment_up_sync_snapshot_v16';
+  const TABLES=['patients','assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations'];
   let syncing=false;
 
-  function D(){try{return window.db||(typeof db!=='undefined'?db:null)}catch(e){return window.db||null}}
-  function C(x){try{return JSON.parse(JSON.stringify(x))}catch(e){return x}}
-  function iso(){return new Date().toISOString()}
-  function H(extra){return Object.assign({apikey:KEY,Authorization:'Bearer '+KEY,'Content-Type':'application/json'},extra||{})}
-  function status(t,s){try{window.__movimentUpSetStatus?.(t,s)}catch(e){}}
-  function ensure(){
-    const d=D(); if(!d)return null;
+  function getDB(){try{return (typeof db!=='undefined')?db:window.db}catch(e){return window.db||null}}
+  function clone(x){try{return JSON.parse(JSON.stringify(x))}catch(e){return x}}
+  function headers(extra){return Object.assign({apikey:KEY,Authorization:'Bearer '+KEY,'Content-Type':'application/json'},extra||{})}
+  function now(){return new Date().toISOString()}
+  function ensureDB(){
+    const d=getDB(); if(!d)return null;
     TABLES.forEach(k=>{if(!Array.isArray(d[k]))d[k]=[]});
-    if(!Array.isArray(d.patients))d.patients=[];
     return d;
   }
-  function saveLocal(){
-    const d=ensure(); if(!d)return false;
-    try{
-      const safe=C(d);
-      if(Array.isArray(safe.patients))safe.patients.forEach(p=>{if(p&&p.photo)delete p.photo});
-      localStorage.setItem(LOCAL_KEY,JSON.stringify(safe));
-      return true;
-    }catch(e){console.error('SYNC localSave',e);return false}
-  }
-  function timeOf(x){
-    const t=Date.parse(x?.updatedAt||x?.updated_at||x?.createdAt||x?.created_at||'');
-    return Number.isFinite(t)?t:0;
-  }
-  function signature(x){try{return JSON.stringify(x)}catch(e){return String(x?.id||'')}}
-  function pidOf(x){return x?.patientId==null?'':String(x.patientId)}
-  function snap(){
-    try{return JSON.parse(localStorage.getItem(SNAP_KEY)||'{}')}catch(e){return {}}
-  }
-  function writeSnap(){
-    const d=ensure(), out={}; if(!d)return;
-    TABLES.forEach(t=>{
-      out[t]={};
-      (d[t]||[]).forEach(x=>{if(x&&x.id!=null)out[t][String(x.id)]=signature(x)});
-    });
-    try{localStorage.setItem(SNAP_KEY,JSON.stringify(out))}catch(e){}
-  }
-  function hasSnap(){try{return !!localStorage.getItem(SNAP_KEY)}catch(e){return false}}
-
-  /* Somente para migração de dados antigos: se dois registros têm o mesmo
-     identificador interno explícito, podem ser reconhecidos como o mesmo
-     paciente. O nome NUNCA é usado como chave. */
-  function legacyKey(p){
-    const k=String(p?.internalId||'').trim().toLowerCase();
-    return k;
-  }
-  function active(p){return !!p && !p.is_deleted && !p.deleted && !p.deleted_at && !p.deletedAt}
-  function markDeleted(p){
-    const t=iso();
-    p.is_deleted=true;
-    p.deleted=true; /* compatibilidade com versões antigas */
-    p.deleted_at=p.deleted_at||t;
-    p.deletedAt=p.deletedAt||p.deleted_at;
-    p.updatedAt=t;
-    p.updated_at=t;
-  }
-  function markActive(p){
-    p.is_deleted=false;
-    p.deleted=false;
-    p.deleted_at=null;
-    p.deletedAt=null;
-    p.updatedAt=p.updatedAt||iso();
-    p.updated_at=p.updatedAt;
-  }
-  function removeLinkedLocal(pid){
-    const d=ensure(); if(!d)return;
-    CHILD_TABLES.concat(['assessments']).forEach(t=>{
-      if(Array.isArray(d[t]))d[t]=d[t].filter(x=>String(x?.patientId)!==String(pid));
-    });
+  function localSave(){
+    const d=ensureDB(); if(!d)return false;
+    try{localStorage.setItem(LOCAL_KEY,JSON.stringify(d));return true}
+    catch(e){console.error('SYNC: falha ao salvar localmente',e);return false}
   }
   function refresh(){
     try{if(typeof renderPatients==='function')renderPatients()}catch(e){}
@@ -5055,215 +4995,447 @@ setTimeout(render,200);setTimeout(render,800);
     try{if(!window.__historyEditActive&&typeof renderHistory==='function')renderHistory()}catch(e){}
     try{if(typeof renderTraining==='function')renderTraining()}catch(e){}
   }
-
-  function rowsFor(t,pid){
-    const d=ensure(); return (d?.[t]||[]).filter(x=>pidOf(x)===String(pid)).map(C);
+  function setStatus(type,text){try{window.__movimentUpSetStatus?.(type,text)}catch(e){}}
+  function timeOf(x){
+    const t=Date.parse(x?.updatedAt||x?.updated_at||x?.createdAt||x?.created_at||'');
+    return Number.isFinite(t)?t:0;
   }
-  function bundle(pid){
-    const b={version:2};
-    CHILD_TABLES.forEach(t=>b[t]=rowsFor(t,pid));
-    return b;
+  function sig(x){try{return JSON.stringify(x)}catch(e){return String(x?.id||'')}}
+  function patientIdOf(x){return x?.patientId==null?'':String(x.patientId)}
+  function readSnapshot(){try{return JSON.parse(localStorage.getItem(SNAP_KEY)||'{}')}catch(e){return {}}}
+  function hasSnapshot(){
+    try{return !!localStorage.getItem(SNAP_KEY)}catch(e){return false}
   }
-  function payload(p){
-    const x=C(p)||{};
-    delete x.__movimentUpSyncBundle;
-    x.__movimentUpSyncBundle=active(p)?bundle(String(p.id)):{version:2};
-    return x;
-  }
-
-  async function remote(table, query=''){
-    const u=URL+'/rest/v1/'+table+'?select=id,data,created_at,updated_at'+query;
-    const r=await fetch(u,{headers:H({'Cache-Control':'no-cache','Pragma':'no-cache'}),cache:'no-store',credentials:'omit'});
-    if(!r.ok)throw new Error(table+' GET '+r.status+' '+await r.text().catch(()=>'')); 
-    const j=await r.json(); return Array.isArray(j)?j:[];
-  }
-
-  async function upsertPatient(p){
-    const t=p.updatedAt||iso();
-    const row={id:String(p.id),data:payload(p),created_at:p.createdAt||t,updated_at:t};
-    const r=await fetch(URL+'/rest/v1/patients?on_conflict=id',{
-      method:'POST',headers:H({'Prefer':'resolution=merge-duplicates,return=minimal','Cache-Control':'no-cache'}),
-      body:JSON.stringify([row]),cache:'no-store',credentials:'omit'
+  function writeSnapshot(){
+    const d=ensureDB(); if(!d)return;
+    const snap={};
+    TABLES.forEach(t=>{
+      snap[t]={};
+      (d[t]||[]).forEach(x=>{if(x&&x.id!=null)snap[t][String(x.id)]=sig(x)})
     });
-    if(!r.ok)throw new Error('patients UPSERT '+r.status+' '+await r.text().catch(()=>''));
-    return true;
-  }
-  async function upsertAssessments(list){
-    if(!list.length)return 0;
-    const rows=list.map(a=>({id:String(a.id),data:C(a),created_at:a.createdAt||iso(),updated_at:a.updatedAt||iso()}));
-    const r=await fetch(URL+'/rest/v1/assessments?on_conflict=id',{
-      method:'POST',headers:H({'Prefer':'resolution=merge-duplicates,return=minimal'}),
-      body:JSON.stringify(rows),cache:'no-store'
-    });
-    if(!r.ok)throw new Error('assessments UPSERT '+r.status+' '+await r.text().catch(()=>''));
-    return rows.length;
+    try{localStorage.setItem(SNAP_KEY,JSON.stringify(snap))}catch(e){}
   }
 
-  function mergeChild(table,r){
-    const d=ensure(); if(!d||!r||r.id==null)return false;
-    const id=String(r.id), i=d[table].findIndex(x=>String(x.id)===id);
-    if(i<0){d[table].push(C(r));return true}
-    if(timeOf(r)>timeOf(d[table][i])){d[table][i]=C(r);return true}
-    return false;
-  }
-  function mergeBundle(b){
-    if(!b)return;
-    CHILD_TABLES.forEach(t=>(Array.isArray(b[t])?b[t]:[]).forEach(r=>mergeChild(t,r)));
-  }
-
-  function findLocalByIdOrLegacy(remoteP){
-    const d=ensure(), id=String(remoteP.id);
-    let i=d.patients.findIndex(p=>String(p.id)===id);
-    if(i>=0)return i;
-    const lk=legacyKey(remoteP);
-    if(lk){
-      const candidates=d.patients.map((p,n)=>({p,n})).filter(x=>active(x.p)&&legacyKey(x.p)===lk);
-      if(candidates.length===1)return candidates[0].n;
-    }
-    return -1;
-  }
-
-  function mergeRemotePatient(row, snapshot){
-    const d=ensure(); if(!d||!row||row.id==null||!row.data)return false;
-    const incoming=C(row.data)||{};
-    incoming.id=String(row.id);
-    if(row.created_at&&!incoming.createdAt)incoming.createdAt=row.created_at;
-    if(row.updated_at){incoming.updatedAt=row.updated_at;incoming.updated_at=row.updated_at}
-    const b=incoming.__movimentUpSyncBundle; delete incoming.__movimentUpSyncBundle;
-    const i=findLocalByIdOrLegacy(incoming);
-    if(i<0){
-      d.patients.push(incoming);
-      if(active(incoming))mergeBundle(b);
-      else removeLinkedLocal(incoming.id);
-      return true;
-    }
-    const local=d.patients[i];
-    const oldSig=(snapshot.patients||{})[String(local.id)];
-    const localChanged=oldSig!==undefined && oldSig!==signature(local);
-    const lt=timeOf(local), rt=timeOf(incoming);
-    /* Se o local está pendente de uma alteração, só perde para uma versão
-       remota realmente mais nova. Exclusão é tratada como dado, não como
-       ausência de registro. */
-    if(localChanged && lt>rt){
-      return false;
-    }
-    d.patients[i]=incoming;
-    if(String(local.id)!==String(incoming.id)){
-      const from=String(local.id), to=String(incoming.id);
-      TABLES.filter(t=>t!=='patients').forEach(t=>(d[t]||[]).forEach(r=>{
-        if(String(r.patientId)===from)r.patientId=to;
-      }));
-    }
-    if(active(incoming))mergeBundle(b);
-    else removeLinkedLocal(incoming.id);
-    return true;
-  }
-
-  function detectLocalChanges(snapshot){
-    const d=ensure(), changedP=new Set(), changedA=new Set();
-    if(!d)return {changedP,changedA};
-    const t=iso();
+  /* Após o primeiro ciclo, identifica somente mudanças feitas neste aparelho. */
+  function stampChangedLocal(){
+    const d=ensureDB(); if(!d)return {changed:new Set(),patientChanged:new Set()};
+    const old=readSnapshot(); const changed=new Set(); const patientChanged=new Set();
+    const t=now();
     TABLES.forEach(table=>{
-      const before=snapshot[table]||{};
-      (d[table]||[]).forEach(r=>{
-        if(!r||r.id==null)return;
-        const id=String(r.id);
-        if(before[id]!==signature(r)){
-          if(!r.createdAt)r.createdAt=t;
-          r.updatedAt=t;
-          r.updated_at=r.updatedAt;
-          const pid=table==='patients'?id:pidOf(r);
-          if(table==='patients')changedP.add(id);
-          else if(pid)changedP.add(pid);
-          if(table==='assessments')changedA.add(id);
+      const before=old[table]||{};
+      (d[table]||[]).forEach(x=>{
+        if(!x||x.id==null)return;
+        const id=String(x.id);
+        if(before[id]!==sig(x)){
+          if(!x.createdAt)x.createdAt=t;
+          x.updatedAt=t;
+          changed.add(table+':'+id);
+          const pid=table==='patients'?id:patientIdOf(x);
+          if(pid)patientChanged.add(pid);
         }
       });
     });
-    /* Se um registro filho mudou, o paciente também sobe com updatedAt novo. */
-    changedP.forEach(pid=>{
-      const p=d.patients.find(x=>String(x.id)===String(pid));
-      if(p){p.updatedAt=t;p.updated_at=t}
+    patientChanged.forEach(pid=>{
+      const p=(d.patients||[]).find(x=>String(x.id)===String(pid));
+      if(p){if(!p.createdAt)p.createdAt=t;p.updatedAt=t}
     });
-    return {changedP,changedA};
+    if(changed.size)localSave();
+    return {changed,patientChanged};
+  }
+
+  function rowsForPatient(table,pid){
+    const d=ensureDB(); if(!d)return [];
+    return (d[table]||[]).filter(x=>patientIdOf(x)===String(pid)).map(clone);
+  }
+  function makeBundle(pid){
+    return {
+      version:1,
+      training:rowsForPatient('training',pid),
+      trainingPlans:rowsForPatient('trainingPlans',pid),
+      trainingProgressions:rowsForPatient('trainingProgressions',pid),
+      trainingSchedules:rowsForPatient('trainingSchedules',pid),
+      trainingAttendance:rowsForPatient('trainingAttendance',pid),
+      aerobicLogs:rowsForPatient('aerobicLogs',pid),
+      trainingCancellations:rowsForPatient('trainingCancellations',pid),
+      aulas:rowsForPatient('aulas',pid)
+    };
+  }
+  function patientPayload(p){
+    const x=clone(p)||{};
+    delete x.__movimentUpSyncBundle;
+    x.__movimentUpSyncBundle=makeBundle(String(p.id));
+    return x;
+  }
+
+  /* Identidade clínica: o nome normalizado é usado apenas para reconhecer
+     o mesmo paciente quando um dispositivo criou um ID local diferente.
+     O ID do Supabase continua sendo o ID canônico quando houver correspondência. */
+  function normalizePatientName(name){
+    return String(name||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ');
+  }
+  function patientMatchKey(p){
+    const n=normalizePatientName(p?.name);
+    if(!n)return '';
+    const internal=String(p?.internalId||'').trim().toLowerCase();
+    return internal ? n+'|'+internal : n;
+  }
+  function mergePatientFields(base,extra){
+    const out=clone(base)||{};
+    const src=clone(extra)||{};
+    const protectedKeys=new Set(['id','createdAt','updatedAt','__movimentUpSyncBundle']);
+    Object.keys(src).forEach(k=>{
+      if(protectedKeys.has(k))return;
+      const v=src[k];
+      const empty=v==null || (typeof v==='string' && !v.trim()) || (Array.isArray(v)&&!v.length);
+      const cur=out[k];
+      const curEmpty=cur==null || (typeof cur==='string' && !cur.trim()) || (Array.isArray(cur)&&!cur.length);
+      if(curEmpty && !empty)out[k]=clone(v);
+    });
+    /* Campos clínicos/observações podem existir em versões diferentes.
+       Se ambos existirem, preserva o conjunto sem apagar informações. */
+    ['functionalConditions','diagnosisRecords','deficiency','diagnoses'].forEach(k=>{
+      if(Array.isArray(src[k]) && src[k].length){
+        const a=Array.isArray(out[k])?out[k]:[];
+        const seen=new Set(a.map(x=>typeof x==='object'?JSON.stringify(x):String(x)));
+        src[k].forEach(x=>{const key=typeof x==='object'?JSON.stringify(x):String(x);if(!seen.has(key)){a.push(clone(x));seen.add(key)}});
+        out[k]=a;
+      }
+    });
+    return out;
+  }
+  function reassignPatientLinks(fromId,toId){
+    const d=ensureDB(); if(!d||String(fromId)===String(toId))return 0;
+    let changed=0;
+    TABLES.filter(t=>t!=='patients').forEach(table=>{
+      (d[table]||[]).forEach(r=>{
+        if(r&&String(r.patientId)===String(fromId)){r.patientId=String(toId);r.updatedAt=now();changed++}
+      });
+    });
+    return changed;
+  }
+  function isRemotePatientDeleted(row){
+    const p=row?.data||{};
+    return !!(p.deleted || p.isDeleted || p.excluded || p.status==='deleted');
+  }
+  function activeRemotePatients(rows){
+    return (rows||[]).filter(row=>row&&row.id!=null&&!isRemotePatientDeleted(row));
+  }
+  function consolidateLocalPatients(remotePatients){
+    const d=ensureDB(); if(!d)return {changed:false,duplicates:0};
+    const remByKey=new Map();
+    activeRemotePatients(remotePatients).forEach(row=>{
+      const p=clone(row?.data)||{}; if(row?.id==null||!p.name)return;
+      p.id=String(row.id);
+      if(row.created_at&&!p.createdAt)p.createdAt=row.created_at;
+      if(row.updated_at)p.updatedAt=row.updated_at;
+      const key=patientMatchKey(p);
+      if(key&&!remByKey.has(key))remByKey.set(key,p);
+    });
+    const byKey=new Map(), keep=[], aliases=new Map();
+    let duplicates=0, changed=false;
+    (d.patients||[]).forEach(p=>{
+      if(!p||p.id==null){return}
+      const key=patientMatchKey(p);
+      const remote=key?remByKey.get(key):null;
+      let canonical=remote||null;
+      if(canonical){
+        const existing=byKey.get(key);
+        if(!existing){
+          const merged=mergePatientFields(canonical,p);
+          merged.id=String(canonical.id);
+          keep.push(merged); byKey.set(key,merged);
+          if(String(p.id)!==String(canonical.id)){aliases.set(String(p.id),String(canonical.id));changed=true}
+        }else{
+          const merged=mergePatientFields(existing,p);
+          Object.assign(existing,merged);
+          if(String(p.id)!==String(existing.id)){aliases.set(String(p.id),String(existing.id));duplicates++;changed=true}
+        }
+        return;
+      }
+      if(key&&byKey.has(key)){
+        const existing=byKey.get(key);
+        Object.assign(existing,mergePatientFields(existing,p));
+        aliases.set(String(p.id),String(existing.id));
+        duplicates++; changed=true; return;
+      }
+      const cp=clone(p);
+      keep.push(cp);
+      if(key)byKey.set(key,cp);
+    });
+    aliases.forEach((to,from)=>{reassignPatientLinks(from,to)});
+    if(keep.length!==(d.patients||[]).length){d.patients=keep;changed=true}
+    return {changed,duplicates,aliases:aliases.size};
+  }
+  function mergeRecord(table,remote){
+    const d=ensureDB(); if(!d||!remote||remote.id==null)return false;
+    if(!Array.isArray(d[table]))d[table]=[];
+    const id=String(remote.id), idx=d[table].findIndex(x=>String(x.id)===id);
+    const r=clone(remote); r.id=id;
+    if(idx<0){d[table].push(r);return true}
+    const l=d[table][idx];
+    if(timeOf(r)>timeOf(l)){d[table][idx]=r;return true}
+    return false;
+  }
+  function mergeBundle(bundle){
+    const d=ensureDB(); if(!d||!bundle)return {added:0,updated:0};
+    let added=0,updated=0;
+    ['training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations','aulas'].forEach(table=>{
+      const arr=Array.isArray(bundle[table])?bundle[table]:[];
+      arr.forEach(r=>{
+        const before=(d[table]||[]).find(x=>String(x.id)===String(r.id));
+        const changed=mergeRecord(table,r);
+        if(changed){if(before)updated++;else added++}
+      });
+    });
+    return {added,updated};
+  }
+  function mergeRemotePatient(row, snapshot){
+    const d=ensureDB(); if(!d||!row||row.id==null||!row.data)return false;
+    const id=String(row.id), incoming=clone(row.data)||{};
+    incoming.id=id;
+    /* Tombstones remotos nunca devem recriar um paciente apagado.
+       Eles apenas marcam o cadastro local como excluído e removem seus
+       vínculos, permitindo que a exclusão se propague entre dispositivos. */
+    if(isRemotePatientDeleted(row)){
+      const idxDeleted=(d.patients||[]).findIndex(x=>String(x?.id)===id);
+      if(idxDeleted>=0){
+        const local=d.patients[idxDeleted];
+        let changed=false;
+        if(!local.deleted){local.deleted=true;changed=true;}
+        if(!local.deletedAt)local.deletedAt=row.updated_at||now();
+        if(!local.updatedAt || timeOf(row)>timeOf(local)){local.updatedAt=row.updated_at||now();}
+        ['assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations','aulas'].forEach(table=>{
+          if(Array.isArray(d[table])){
+            const before=d[table].length;
+            d[table]=d[table].filter(x=>String(x?.patientId)!==id);
+            if(d[table].length!==before)changed=true;
+          }
+        });
+        return changed;
+      }
+      return false;
+    }
+    if(row.created_at&&!incoming.createdAt)incoming.createdAt=row.created_at;
+    if(row.updated_at)incoming.updatedAt=row.updated_at;
+    const bundle=incoming.__movimentUpSyncBundle;
+    delete incoming.__movimentUpSyncBundle;
+    let idx=d.patients.findIndex(x=>String(x.id)===id);
+    /* Se o mesmo paciente existe localmente com outro ID, reaproveita o
+       cadastro local somente quando ele foi alterado depois do último snapshot.
+       Caso contrário, o registro remoto passa a ser a versão canônica. */
+    if(idx<0){
+      const key=patientMatchKey(incoming);
+      if(key){
+        idx=d.patients.findIndex(x=>patientMatchKey(x)===key);
+        if(idx>=0){
+          const local=d.patients[idx];
+          const oldSig=(snapshot?.patients||{})[String(local.id)];
+          const localWasChanged=oldSig!==undefined && oldSig!==sig(local);
+          if(!localWasChanged){
+            const merged=mergePatientFields(incoming,local);
+            merged.id=id;
+            d.patients[idx]=merged;
+            if(bundle)mergeBundle(bundle);
+            return true;
+          }
+          return false;
+        }
+      }
+      d.patients.push(incoming);
+      if(bundle)mergeBundle(bundle);
+      return true;
+    }
+    const local=d.patients[idx];
+    const oldSig=(snapshot?.patients||{})[id];
+    const localWasChanged=oldSig!==undefined && oldSig!==sig(local);
+    let changed=false;
+    /* Regra principal: se este aparelho não alterou o cadastro desde o último
+       snapshot, o servidor pode trazer uma versão nova mesmo que o timestamp
+       local seja artificialmente mais recente. Isso corrige o caso em que o
+       tablet ficava preso aos seus dados locais antigos. */
+    if(!localWasChanged || timeOf(incoming)>timeOf(local)){
+      d.patients[idx]=incoming; changed=true;
+      if(bundle)mergeBundle(bundle);
+    }else if(bundle){
+      mergeBundle(bundle);
+    }
+    return changed;
+  }
+
+  /* Busca cada tabela separadamente. Se assessments tiver algum problema,
+     patients continua sincronizando normalmente. */
+  async function getRemote(table){
+    /* V14: consulta somente com parâmetros aceitos pelo PostgREST.
+       O cache é desativado pelos headers/fetch; não usamos parâmetros
+       artificiais como _sync, pois o Supabase interpreta parâmetros
+       desconhecidos como filtros e pode retornar PGRST100. */
+    const endpoint=URL+'/rest/v1/'+table+'?select=id,data,created_at,updated_at&order=updated_at.asc&limit=1000';
+    const r=await fetch(endpoint,{
+      method:'GET',
+      headers:headers({'Cache-Control':'no-cache','Pragma':'no-cache'}),
+      cache:'no-store',
+      credentials:'omit'
+    });
+    if(!r.ok)throw new Error(table+' GET '+r.status+' '+await r.text().catch(()=>'') );
+    const json=await r.json();
+    return Array.isArray(json)?json:[];
+  }
+
+  async function upsertPatients(changedPatientIds){
+    const d=ensureDB(); if(!d)return 0;
+    const list=(d.patients||[]).filter(p=>p&&p.id!=null&&changedPatientIds.has(String(p.id)));
+    if(!list.length)return 0;
+    let sent=0;
+    /* Envia um paciente por requisição. Isso reduz drasticamente o tamanho do
+       UPSERT e evita o statement timeout quando vários cadastros possuem
+       histórico/prescrição anexados no bundle. */
+    for(const p of list){
+      const row={id:String(p.id),data:patientPayload(p),created_at:p.createdAt||now(),updated_at:p.updatedAt||now()};
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),15000);
+      try{
+        const r=await fetch(URL+'/rest/v1/patients?on_conflict=id',{method:'POST',headers:headers({'Prefer':'resolution=merge-duplicates,return=minimal','Cache-Control':'no-cache'}),body:JSON.stringify([row]),cache:'no-store',credentials:'omit',signal:controller.signal});
+        if(!r.ok)throw new Error('patients UPSERT '+r.status+' '+await r.text().catch(()=>'') );
+        sent++;
+      }finally{clearTimeout(timer)}
+    }
+    return sent;
+  }
+  /* Compatibilidade: algumas rotinas antigas da V19 chamavam
+     upsertPatients pelo escopo global. A função principal fica dentro desta
+     IIFE para não poluir o namespace, mas expomos somente este método para
+     impedir o erro "upsertPatients is not defined". */
+  window.upsertPatients=upsertPatients;
+
+  async function upsertAssessments(changedKeys){
+    const d=ensureDB(); if(!d)return 0;
+    const list=(d.assessments||[]).filter(a=>a&&a.id!=null&&changedKeys.has('assessments:'+String(a.id)));
+    if(!list.length)return 0;
+    const rows=list.map(a=>({id:String(a.id),data:clone(a),created_at:a.createdAt||now(),updated_at:a.updatedAt||now()}));
+    const r=await fetch(URL+'/rest/v1/assessments?on_conflict=id',{method:'POST',headers:headers({'Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(rows)});
+    if(!r.ok)throw new Error('assessments UPSERT '+r.status+' '+await r.text().catch(()=>'') );
+    return rows.length;
   }
 
   async function syncNow(reason){
     if(syncing||navigator.onLine===false)return;
-    const d=ensure(); if(!d)return;
+    const d=ensureDB(); if(!d)return;
     syncing=true;
-    status('syncing','ONLINE • SINCRONIZANDO COM SUPABASE...');
+    setStatus('syncing','ONLINE • sincronizando com Supabase...');
     try{
-      const first=!hasSnap(), snapshot=snap();
-      const remotePatients=await remote('patients','&order=updated_at.asc&limit=2000');
-      /* RECEBE PRIMEIRO. O servidor nunca é tratado como "lista a juntar":
-         cada paciente é reconciliado pelo ID/timestamp. */
-      remotePatients.forEach(r=>mergeRemotePatient(r,snapshot));
+      const firstSync=!hasSnapshot();
+      const snapshot=readSnapshot();
+      let remotePatients=[];
+      let remoteAssessments=[];
 
-      let remoteAssess=[];
+      /* PRIMEIRO: baixa pacientes. Isso é obrigatório para a sincronização
+         tablet/computador e não depende da tabela assessments. */
+      remotePatients=await getRemote('patients');
+      /* Antes de mesclar por ID, consolida os IDs locais que representam o
+         mesmo paciente. Assim, os 52 cadastros locais antigos não viram
+         duplicatas quando os 108 registros compartilhados chegam do servidor. */
+      const consolidated=consolidateLocalPatients(remotePatients);
+      let remotePatientChanges=0;
+      for(const row of remotePatients){if(mergeRemotePatient(row,snapshot))remotePatientChanges++}
+      /* Uma segunda consolidação captura casos em que o paciente remoto foi
+         inserido após a primeira passada e garante uma única identidade local. */
+      const consolidatedAfter=consolidateLocalPatients(remotePatients);
+
+      /* assessments é complementar: se falhar, pacientes continuam sincronizados. */
       try{
-        remoteAssess=await remote('assessments','&order=updated_at.asc&limit=5000');
-        remoteAssess.forEach(r=>{
-          if(!r?.data||r.id==null)return;
-          const a=C(r.data);a.id=String(r.id);
-          if(r.created_at&&!a.createdAt)a.createdAt=r.created_at;
-          if(r.updated_at)a.updatedAt=r.updated_at;
-          mergeChild('assessments',a);
-        });
-      }catch(e){console.warn('SYNC assessments:',e)}
-
-      saveLocal(); refresh();
-
-      /* Após receber, identifica somente o que este aparelho mudou desde o
-         último snapshot e envia de volta. Em primeira conexão, registros
-         locais que não existem no servidor também são enviados. */
-      const local=detectLocalChanges(snapshot);
-      if(first){
-        const remoteIds=new Set(remotePatients.map(r=>String(r.id)));
-        d.patients.forEach(p=>{
-          if(!p?.id)return;
-          if(!remoteIds.has(String(p.id)))local.changedP.add(String(p.id));
-        });
-        const remoteA=new Set(remoteAssess.map(r=>String(r.id)));
-        (d.assessments||[]).forEach(a=>{if(a?.id&&!remoteA.has(String(a.id)))local.changedA.add(String(a.id))});
+        remoteAssessments=await getRemote('assessments');
+        for(const row of remoteAssessments){
+          if(!row||row.id==null||!row.data)continue;
+          const r=clone(row.data);r.id=String(row.id);
+          if(row.created_at&&!r.createdAt)r.createdAt=row.created_at;
+          if(row.updated_at)r.updatedAt=row.updated_at;
+          mergeRecord('assessments',r);
+        }
+      }catch(e){
+        console.warn('SYNC: assessments não pôde ser sincronizado; patients continua normal.',e);
       }
 
-      for(const pid of local.changedP){
-        const p=d.patients.find(x=>String(x.id)===String(pid));
-        if(p)await upsertPatient(p);
-      }
-      const as=[...(d.assessments||[])].filter(a=>local.changedA.has(String(a.id)));
-      try{await upsertAssessments(as)}catch(e){console.warn('SYNC assessments upload:',e)}
+      if(remotePatientChanges||remoteAssessments.length)localSave();
+      refresh();
 
-      writeSnap(); saveLocal(); refresh();
-      status('online','ONLINE • SINCRONIZADO COM SUPABASE');
-      console.log('Moviment Up V17 sync OK',{reason,first,patients:remotePatients.length});
-    }catch(e){
-      console.error('Moviment Up V17 sync ERROR',e);
-      const msg=String(e?.message||e);
-      if(navigator.onLine===false)status('offline','OFFLINE • DADOS SALVOS NESTE DISPOSITIVO');
-      else status('error','ONLINE • ERRO DE SINCRONIZAÇÃO: '+msg);
+      /* Primeira sincronização: os dados remotos acabaram de ser incorporados.
+         Não envia os dados locais antigos por cima deles. A partir do próximo
+         ciclo, o snapshot identifica somente alterações reais do dispositivo. */
+      let changedKeys=new Set();
+      let changedPatientIds=new Set();
+      if(!firstSync){
+        const localChanges=stampChangedLocal();
+        changedKeys=localChanges.changed;
+        changedPatientIds=localChanges.patientChanged;
+        const pushedPatients=await window.upsertPatients(changedPatientIds);
+        let pushedAssessments=0;
+        try{pushedAssessments=await upsertAssessments(changedKeys)}catch(e){console.warn('SYNC: assessments não enviado.',e)}
+        writeSnapshot();
+        localSave();
+        setStatus('online','ONLINE • sincronizado com Supabase');
+        console.log('Moviment Up — sincronização concluída',{reason,remotePatients:remotePatients.length,activePatients:activeRemotePatients(remotePatients).length,remoteAssessments:remoteAssessments.length,pushedPatients,pushedAssessments});
+      }else{
+        writeSnapshot();
+        localSave();
+        const activeCount=activeRemotePatients(remotePatients).length;
+        setStatus('online','ONLINE • '+activeCount+' pacientes ativos sincronizados');
+        console.log('Moviment Up — primeira sincronização concluída',{reason,remotePatients:remotePatients.length,activePatients:activeCount,remoteAssessments:remoteAssessments.length,duplicatasConsolidadas:(consolidated.duplicates||0)+(consolidatedAfter.duplicates||0)});
+      }
+      refresh();
+    }catch(err){
+      console.error('Moviment Up — sincronização falhou',err);
+      if(navigator.onLine===false)setStatus('offline','OFFLINE • dados salvos neste dispositivo');
+      else {
+        const msg=String(err.message||'verifique a conexão');
+        if(msg.includes('57014')||msg.toLowerCase().includes('statement timeout')) setStatus('error','ONLINE • Supabase demorou para processar o cadastro; dados permanecem salvos localmente');
+        else setStatus('error','ONLINE • erro ao sincronizar: '+msg);
+      }
     }finally{syncing=false}
   }
 
-  /* Intercepta persist sem substituir a lógica de salvamento da plataforma. */
-  if(typeof window.persist==='function'&&!window.__movimentUpPersistV17){
-    window.__movimentUpPersistV17=true;
-    const basePersist=window.persist;
+  /* O salvamento local continua funcionando sem internet. Depois de salvar,
+     tenta sincronizar automaticamente quando houver conexão. */
+  const originalPersist=window.persist;
+  if(typeof originalPersist==='function'&&!window.__movimentUpPersistV10){
+    window.__movimentUpPersistV10=true;
     window.persist=function(){
-      const r=basePersist.apply(this,arguments);
-      if(r!==false&&navigator.onLine)setTimeout(()=>syncNow('salvamento'),250);
-      return r;
+      const result=originalPersist.apply(this,arguments);
+      if(result!==false&&navigator.onLine)setTimeout(()=>syncNow('alteração salva localmente'),300);
+      return result;
     };
   }
 
   window.syncMovimentUpV10=()=>syncNow('manual');
-  window.syncMovimentUpV17=()=>syncNow('manual V17');
   window.syncMovimentUpV9=()=>syncNow('compatibilidade V9');
   window.syncBidirectionalV7=()=>syncNow('compatibilidade V7');
   window.syncAllPatientsToSupabase=()=>syncNow('compatibilidade');
   window.addEventListener('online',()=>setTimeout(()=>syncNow('internet restaurada'),700));
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&navigator.onLine)setTimeout(()=>syncNow('retorno à plataforma'),700)});
   window.addEventListener('load',()=>setTimeout(()=>syncNow('abertura da plataforma'),1200));
+
+})();
+</script>
+
+
+<script id="moviment-up-auto-sync-v14">
+(function(){
+  'use strict';
+  /* V14: uma única rotina de sincronização automática.
+     Evita concorrência entre timers/hooks de versões anteriores. */
+  function run(reason){
+    try{
+      if(navigator.onLine && typeof window.syncMovimentUpV10==='function'){
+        window.syncMovimentUpV10(reason||'sincronização automática');
+      }
+    }catch(e){console.warn('Moviment Up auto-sync:',e)}
+  }
+  window.syncMovimentUpV14=()=>run('manual V14');
+  /* AUTO-SYNC 15s DESATIVADO: evita tremor/re-renderização contínua da plataforma. Sincronização por ações, online e retorno à aba permanece ativa. */
+  window.addEventListener('online',()=>setTimeout(()=>run('internet restaurada V14'),700));
+  document.addEventListener('visibilitychange',()=>{
+    if(!document.hidden && navigator.onLine)setTimeout(()=>run('retorno à plataforma V14'),700);
+  });
+  window.addEventListener('load',()=>setTimeout(()=>run('abertura da plataforma V14'),1200));
 })();
 </script>
 <script id="moviment-up-final-patient-push"><!-- DESATIVADO: o mecanismo central é a única rotina de UPSERT do paciente. --></script>
@@ -6000,7 +6172,12 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   }
   function header(title,p,plan){
     const prof=plan.professor||'—', date=plan.date?formatDate(plan.date):'—';
-    return '<div class="head"><div class="title"><h1>'+safe(title)+'</h1><p>Moviment’ Up — Casa de David</p></div></div><div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(date)+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(prof)+'</span></div>';
+    /* Usa o mesmo logo institucional já exibido na plataforma. Como a ficha é aberta
+       em uma nova janela, o src é copiado para dentro do HTML da impressão. */
+    const logoEl=document.querySelector('.brand-logo')||document.querySelector('.logo img');
+    const logoSrc=logoEl?.src||'';
+    const logoHtml=logoSrc?'<img class="logo" src="'+safe(logoSrc)+'" alt="Casa de David">':'';
+    return '<div class="head">'+logoHtml+'<div class="title"><h1>'+safe(title)+'</h1><p>Moviment’ Up — Casa de David</p></div></div><div class="patient"><div><b>Paciente</b><span>'+safe(p.name)+'</span></div><div><b>Unidade</b><span>'+safe(p.unit||p.unidade)+'</span></div><div><b>Sexo</b><span>'+safe(p.sex)+'</span></div><div><b>Prescrição</b><span>'+safe(date)+'</span></div></div><div class="field"><b>Professor responsável</b><span>'+safe(prof)+'</span></div>';
   }
   function strengthBody(p,plan,onlyDay){
     let days=onlyDay?[onlyDay]:['A','B','C','D','E'];
@@ -6029,6 +6206,316 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   window.printStrengthTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha de Treinamento Resistido',strengthBody(x.p,x.plan));};
   window.printAerobicTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha de Treinamento Aeróbico',aerobicBody(x.p,x.plan));};
   window.printCompleteTrainingSheet=function(){const x=sheetPatient();if(!x)return;openSheet('Ficha Completa de Treino',strengthBody(x.p,x.plan)+aerobicBody(x.p,x.plan));};
+})();
+</script>
+
+<!-- MOVIMENT UP V19 — PERSISTÊNCIA CENTRAL / ID ÚNICO / RECUPERAÇÃO DE DADOS — PATCH FINAL -->
+<script id="moviment-up-v19-persistence-final">
+(function(){
+  'use strict';
+  const $=id=>document.getElementById(id);
+  const S=id=>$(id)?.value??'';
+  const SV=(id,v)=>{if($(id))$(id).value=v??''};
+  const STR=v=>String(v??'').trim();
+  const NUM=v=>{const n=parseFloat(v);return Number.isFinite(n)?n:null};
+  const ageFromBirth=v=>{
+    if(typeof calcAgeFromBirth==='function') return calcAgeFromBirth(v);
+    if(!v)return null;
+    const b=new Date(String(v)+'T00:00:00'), t=new Date();
+    if(Number.isNaN(b.getTime()))return null;
+    let a=t.getFullYear()-b.getFullYear();
+    if(t.getMonth()<b.getMonth() || (t.getMonth()===b.getMonth()&&t.getDate()<b.getDate()))a--;
+    return a>=0?a:null;
+  };
+  const pById=pid=>(window.db?.patients||[]).find(p=>p&&!p.deleted&&String(p.id)===String(pid))||null;
+  const uniq=a=>[...new Set((a||[]).filter(Boolean))];
+  const recName=x=>typeof x==='string'?x:STR(x?.name);
+  const recNorm=x=>typeof x==='string'?{name:STR(x),classification:''}:{name:STR(x?.name),classification:STR(x?.classification)};
+  const mergeArr=(a,b)=>{const out=[...(Array.isArray(a)?a:[])];const seen=new Set(out.map(x=>JSON.stringify(x)));(Array.isArray(b)?b:[]).forEach(x=>{const k=JSON.stringify(x);if(!seen.has(k)){out.push(x);seen.add(k)}});return out};
+
+  function refreshPatientAges(){
+    let changed=false;
+    (window.db?.patients||[]).forEach(p=>{
+      if(!p||p.deleted)return;
+      const a=ageFromBirth(p.birth);
+      if(a!=null && Number(p.age)!==Number(a)){p.age=a;changed=true}
+      if(a==null && p.age!=null && STR(p.birth)===''){/* preserve legacy manually stored age when birth is absent */}
+    });
+    if(changed && typeof persist==='function')persist();
+    const a=S('pBirth');if(a)SV('pAge',ageFromBirth(a)!=null?ageFromBirth(a)+' anos':'');
+  }
+
+  function collectClinical(existing){
+    let functional=mergeArr(existing?.functionalConditions,window.__functionalRecords);
+    let diagnoses=mergeArr(existing?.diagnosisRecords,window.__diagnosisRecords);
+    try{
+      if(typeof selectedClinicalValues==='function'){
+        const c=selectedClinicalValues()||{};
+        if(Array.isArray(c.deficiency)) functional=mergeArr(functional,c.deficiency.map(x=>({name:x,classification:''})));
+        if(Array.isArray(c.diagnoses)) diagnoses=mergeArr(diagnoses,c.diagnoses.map(x=>({name:typeof x==='string'?x:x?.name,classification:typeof x==='string'?'':x?.classification||''})));
+      }
+    }catch(e){console.warn('V19: leitura clínica preservada sem interrupção',e)}
+    return {functional:functional.map(recNorm).filter(x=>x.name),diagnoses:diagnoses.map(recNorm).filter(x=>x.name)};
+  }
+
+  function patientFormData(existing){
+    const c=collectClinical(existing);
+    const birth=S('pBirth');
+    const age=ageFromBirth(birth);
+    const currentOther=STR(S('pOtherDiag'));
+    const data={
+      name:STR(S('pName')),
+      internalId:STR(S('pId')),
+      birth:birth,
+      age:age,
+      sex:S('pSex'),
+      unit:S('pUnit'),
+      diagnosis:STR(S('pDiag')),
+      diagnosisDetail:STR(S('pDiagDetail')),
+      otherDiagnosis:currentOther,
+      supportLevel:S('pSupport'),
+      obs:STR(S('pObs')),
+      updatedAt:new Date().toISOString()
+    };
+    // Só substitui campos clínicos quando a interface realmente tem conteúdo;
+    // campos antigos/estruturas desconhecidas permanecem intactos.
+    if(c.functional.length || c.diagnoses.length || !existing){
+      data.functionalConditions=c.functional;
+      data.diagnosisRecords=c.diagnoses;
+      data.deficiency=uniq(c.functional.map(x=>x.name));
+      data.diagnoses=uniq(c.diagnoses.map(x=>x.name));
+      const tea=c.functional.find(x=>x.name==='Autismo / TEA');
+      const firstDiag=c.diagnoses[0]?.name||c.functional[0]?.name||'';
+      if(firstDiag) data.diagnosis=firstDiag;
+      if(tea?.classification) data.diagnosisDetail=tea.classification;
+    }
+    // Nunca apaga dados clínicos existentes só porque um campo compatível
+    // está vazio no formulário.
+    if(!data.diagnosis && existing?.diagnosis) data.diagnosis=existing.diagnosis;
+    if(!data.diagnosisDetail && existing?.diagnosisDetail) data.diagnosisDetail=existing.diagnosisDetail;
+    if(!data.otherDiagnosis && existing?.otherDiagnosis) data.otherDiagnosis=existing.otherDiagnosis;
+    return data;
+  }
+
+  function verifyLocalPersistence(pid){
+    // KEY é uma constante privada do script principal e não é acessível
+    // neste bloco. A V19 usa esta mesma chave para a persistência local.
+    const storageKey='casa_david_moviment_up_v1';
+    try{
+      const raw=localStorage.getItem(storageKey);
+      if(!raw)return false;
+      const x=JSON.parse(raw);
+      const p=(x.patients||[]).find(q=>q&&!q.deleted&&String(q.id)===String(pid));
+      return !!p;
+    }catch(e){
+      console.warn('V19: não foi possível confirmar a persistência local',e);
+      return false;
+    }
+  }
+
+  // Cadastro: uma única função final, preservando ID e todos os campos existentes.
+  window.savePatient=function(){
+    const name=STR(S('pName'));
+    if(!name){if($('patientMsg'))$('patientMsg').innerHTML='<div class="notice danger">Informe o nome do paciente.</div>';$('pName')?.focus();return;}
+    const editId=(typeof currentPatientEditId!=='undefined'&&currentPatientEditId)?String(currentPatientEditId):'';
+    const existing=editId?pById(editId):null;
+    const data=patientFormData(existing);
+    let p;
+    if(existing){
+      // Atualização seletiva: valores vazios do formulário não apagam dados existentes.
+      Object.keys(data).forEach(k=>{
+        const v=data[k];
+        if(Array.isArray(v)){ if(v.length)existing[k]=v; else if(!Array.isArray(existing[k]))existing[k]=[]; }
+        else if(k==='age'){ if(v!=null)existing.age=v; else if(existing.age==null)existing.age=ageFromBirth(existing.birth); }
+        else if(k==='updatedAt'){existing.updatedAt=v;}
+        else if(v!==null && v!==undefined && STR(v)!=='')existing[k]=v;
+      });
+      if(!existing.id)existing.id=editId;
+      p=existing;
+    }else{
+      p={id:(typeof uid==='function'?uid('p'):'p_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8)),...data,createdAt:new Date().toISOString()};
+      window.db.patients.push(p);
+    }
+    if(typeof consolidateDuplicatePatients==='function')consolidateDuplicatePatients();
+    if(typeof persist==='function'&&!persist())return;
+    // Releitura real do armazenamento antes de confirmar ao usuário.
+    const persisted=verifyLocalPersistence(p.id);
+    if(!persisted){
+      if(!existing)window.db.patients=window.db.patients.filter(x=>String(x.id)!==String(p.id));
+      if($('patientMsg'))$('patientMsg').innerHTML='<div class="notice danger">Os dados não puderam ser confirmados no armazenamento local. Nenhuma alteração foi confirmada.</div>';
+      return;
+    }
+    if(typeof populateSelects==='function')populateSelects();
+    if(typeof renderPatients==='function')renderPatients();
+    if(typeof updateCounts==='function')updateCounts();
+    if(typeof calcPatientAge==='function')calcPatientAge();
+    if($('patientMsg'))$('patientMsg').innerHTML='<div class="notice success">'+(existing?'Paciente atualizado':'Paciente salvo')+' com sucesso. Todos os dados foram preservados no mesmo ID.</div>';
+    if(typeof currentPatientEditId!=='undefined')currentPatientEditId=String(p.id);
+    // Sincronização já existente da V19 detectará o paciente pelo ID/updatedAt.
+    if(typeof window.__movimentUpSetStatus==='function' && navigator.onLine)window.__movimentUpSetStatus('syncing','ONLINE • cadastro salvo; sincronizando...');
+  };
+
+  window.editPatientClinical=function(pid){
+    const p=pById(pid);if(!p)return;
+    if(typeof currentPatientEditId!=='undefined')currentPatientEditId=String(p.id);
+    SV('pName',p.name);SV('pId',p.internalId||'');SV('pBirth',p.birth||'');
+    const age=ageFromBirth(p.birth);
+    SV('pAge',age!=null?age+' anos':(p.age!=null?p.age+' anos':''));
+    SV('pSex',p.sex||'');SV('pUnit',p.unit||'');SV('pSupport',p.supportLevel||'');SV('pObs',p.obs||'');
+    // Compatibilidade com diagnóstico antigo.
+    SV('pDiag',p.diagnosis||'');SV('pDiagDetail',p.diagnosisDetail||'');SV('pOtherDiag',p.otherDiagnosis||'');
+    if(typeof normalizePatientClinical==='function'){
+      const c=normalizePatientClinical(p)||{functional:[],diagnoses:[]};
+      window.__functionalRecords=(c.functional||[]).map(recNorm);
+      window.__diagnosisRecords=(c.diagnoses||[]).map(recNorm);
+    }else{
+      window.__functionalRecords=(p.functionalConditions||p.deficiency||[]).map(recNorm);
+      window.__diagnosisRecords=(p.diagnosisRecords||p.diagnoses||[]).map(recNorm);
+    }
+    try{if(typeof setClinicalFromPatient==='function')setClinicalFromPatient(p)}catch(e){}
+    if(typeof renderClinicalForm==='function')renderClinicalForm();
+    if(typeof updateDiagnosisOptions==='function')updateDiagnosisOptions();
+    if($('patientMsg'))$('patientMsg').innerHTML='<div class="notice">Editando cadastro de '+(typeof esc==='function'?esc(p.name):p.name)+'. Todos os dados existentes foram carregados.</div>';
+    if(typeof show==='function')show('patients');
+    setTimeout(()=>{SV('pAge',ageFromBirth(p.birth)!=null?ageFromBirth(p.birth)+' anos':'');},0);
+    window.scrollTo({top:0,behavior:'smooth'});
+  };
+
+  // Seleção central: todos os módulos recebem o mesmo objeto pelo ID.
+  window.getPatientByIdV19=pid=>pById(pid);
+  window.getActivePatientV19=()=>{
+    const ids=[S('aPatient'),S('rPatient'),S('tPatient'),S('sPatient'),S('hPatient')];
+    const active=ids.find(Boolean)||window.activePatientId||'';
+    return pById(active);
+  };
+
+  function renderAssessmentIdentityFull(){
+    const pid=S('aPatient');const p=pById(pid);const host=$('assessmentPatientIdentity');
+    if(!host||!p)return;
+    const age=ageFromBirth(p.birth);const diagnoses=uniq([...(p.diagnoses||[]),...(p.deficiency||[]),p.diagnosis,p.otherDiagnosis].map(STR)).filter(Boolean);
+    host.querySelector('.identity-note')?.replaceChildren(document.createTextNode('Dados puxados automaticamente do CADASTRO DO PACIENTE. O mesmo ID é utilizado em todas as avaliações e relatórios.'));
+    let grid=host.querySelector('.identity-grid');
+    if(!grid){grid=document.createElement('div');grid.className='identity-grid';host.prepend(grid)}
+    grid.innerHTML=`<button type="button" class="identity-btn"><span>Nome completo</span><strong>${typeof esc==='function'?esc(p.name):p.name}</strong></button>
+      <button type="button" class="identity-btn"><span>Data de nascimento / Idade</span><strong>${p.birth?(typeof formatDate==='function'?formatDate(p.birth):p.birth):'—'} / ${age!=null?age+' anos':'—'}</strong></button>
+      <button type="button" class="identity-btn"><span>Sexo / Unidade</span><strong>${typeof esc==='function'?esc(p.sex||'—'):'—'} / ${typeof esc==='function'?esc(p.unit||'—'):'—'}</strong></button>
+      <button type="button" class="identity-btn"><span>Diagnóstico</span><strong>${typeof esc==='function'?esc(diagnoses.join(', ')||'Não informado'):(diagnoses.join(', ')||'Não informado')}</strong></button>`;
+    const alert=$('assessmentIdentityAlert');if(alert)alert.textContent='';
+  }
+
+  function wirePatientSelectors(){
+    ['aPatient','rPatient','tPatient','sPatient','hPatient'].forEach(id=>{
+      const el=$(id);if(!el||el.dataset.v19central==='1')return;
+      el.dataset.v19central='1';
+      el.addEventListener('change',()=>{
+        const pid=el.value;
+        if(pid&&pById(pid)){
+          window.activePatientId=String(pid);
+          try{localStorage.setItem('casa_david_moviment_up_active_patient_v1',String(pid))}catch(e){}
+        }
+        if(id==='aPatient'){
+          if(typeof refreshAssessmentPatientIdentity==='function')refreshAssessmentPatientIdentity();
+          renderAssessmentIdentityFull();
+          if(typeof calcCardioFC==='function')calcCardioFC();
+        }
+      });
+    });
+  }
+
+  const baseShow=window.show;
+  window.show=function(id){
+    if(typeof baseShow==='function')baseShow(id);
+    setTimeout(()=>{
+      wirePatientSelectors();
+      refreshPatientAges();
+      if(id==='assessment'){
+        const pid=S('aPatient')||window.activePatientId||'';
+        if(pid&&pById(pid)){
+          SV('aPatient',String(pid));
+          if(typeof refreshAssessmentPatientIdentity==='function')refreshAssessmentPatientIdentity();
+          renderAssessmentIdentityFull();
+          if(typeof calcCardioFC==='function')calcCardioFC();
+        }
+      }
+      if(id==='report'&&typeof renderReport==='function')renderReport();
+    },40);
+  };
+
+  // Avaliação: garante snapshot completo sem criar outro paciente.
+  const baseSaveAssessment=window.saveAssessment;
+  window.saveAssessment=function(){
+    const pid=S('aPatient'),p=pById(pid);
+    if(!p){alert('Selecione um paciente cadastrado.');return;}
+    if(typeof baseSaveAssessment==='function')baseSaveAssessment();
+    const list=window.db?.assessments||[];
+    const id=typeof currentAssessmentId!=='undefined'?currentAssessmentId:null;
+    let a=id?list.find(x=>String(x.id)===String(id)):null;
+    if(!a)a=list.slice().reverse().find(x=>String(x.patientId)===String(pid)&&String(x.date||'')===String(S('aDate')||''));
+    if(a){
+      a.patientId=String(p.id);
+      a.patientSnapshot={...(a.patientSnapshot||{}),id:String(p.id),name:p.name||'',birth:p.birth||'',age:ageFromBirth(p.birth),sex:p.sex||'',unit:p.unit||'',supportLevel:p.supportLevel||'',diagnosis:p.diagnosis||'',diagnosisDetail:p.diagnosisDetail||'',otherDiagnosis:p.otherDiagnosis||'',diagnoses:uniq([...(p.diagnoses||[]),...(p.deficiency||[])])};
+      if(typeof persist==='function')persist();
+    }
+    renderAssessmentIdentityFull();
+  };
+
+  const baseEditAssessment=window.editAssessment;
+  window.editAssessment=function(id){
+    if(typeof baseEditAssessment==='function')baseEditAssessment(id);
+    const a=(window.db?.assessments||[]).find(x=>String(x.id)===String(id));
+    const p=a?pById(a.patientId):null;
+    if(p){window.activePatientId=String(p.id);SV('aPatient',String(p.id));setTimeout(renderAssessmentIdentityFull,20);}
+  };
+
+  // Cardiorrespiratória: nunca usa nome como chave.
+  const baseCardio=window.calcCardioFC;
+  window.calcCardioFC=function(){
+    const pid=S('aPatient'),p=pById(pid);
+    if(!p){
+      const z=$('fcZonesTable');if(z)z.innerHTML='<div class="notice">Selecione um paciente cadastrado para iniciar a avaliação cardiorrespiratória.</div>';
+      return;
+    }
+    if(typeof refreshAssessmentPatientIdentity==='function')refreshAssessmentPatientIdentity();
+    renderAssessmentIdentityFull();
+    if(typeof baseCardio==='function')return baseCardio();
+  };
+
+  // Relatório/PDF: reconstrói a identificação a partir do paciente central e inclui todos os dados existentes.
+  const baseReport=window.renderReport;
+  window.renderReport=function(){
+    if(typeof baseReport==='function')baseReport();
+    const sel=$('rPatient');const pid=sel?.value||window.activePatientId||'';const p=pById(pid);const out=$('reportContent');
+    if(!out||!p)return;
+    const as=(window.db?.assessments||[]).filter(a=>String(a.patientId)===String(p.id)).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+    const last=as.at(-1);const age=ageFromBirth(p.birth);const diag=uniq([...(p.diagnoses||[]),...(p.deficiency||[]),p.diagnosis,p.otherDiagnosis].map(STR)).filter(Boolean);
+    const escv=v=>typeof esc==='function'?esc(v??'—'):String(v??'—');
+    let central=out.querySelector('.v19-central-patient-data');
+    if(!central){central=document.createElement('div');central.className='card v19-central-patient-data';out.prepend(central)}
+    central.innerHTML=`<h3>DADOS DO PACIENTE — CADASTRO CENTRAL</h3><div class="report-meta">
+      <p><b>Nome completo:</b> ${escv(p.name)}</p><p><b>Data de nascimento:</b> ${p.birth?(typeof formatDate==='function'?formatDate(p.birth):escv(p.birth)):'—'}</p>
+      <p><b>Idade:</b> ${age!=null?age+' anos':'—'}</p><p><b>Sexo:</b> ${escv(p.sex)}</p><p><b>Unidade:</b> ${escv(p.unit)}</p><p><b>Nível de apoio:</b> ${escv(p.supportLevel)}</p>
+      <p><b>Diagnósticos/condições:</b> ${escv(diag.join('; ')||'Não informado')}</p><p><b>Observações:</b> ${escv(p.obs)}</p></div>`;
+    let ev=out.querySelector('.v19-all-evaluations');
+    if(!ev){ev=document.createElement('div');ev.className='card v19-all-evaluations';out.appendChild(ev)}
+    if(!as.length){ev.innerHTML='<h3>AVALIAÇÕES</h3><p>Nenhuma avaliação registrada para este paciente.</p>'}
+    else ev.innerHTML='<h3>AVALIAÇÕES REGISTRADAS</h3><table><tr><th>Data</th><th>IMC</th><th>ICQ</th><th>TUG</th><th>Sentar/Levantar</th><th>Handgrip D/E</th><th>Wells</th><th>VO₂máx</th><th>FCmáx</th></tr>'+as.map(a=>`<tr><td>${typeof formatDate==='function'?formatDate(a.date):escv(a.date)}</td><td>${a.anthropometry?.bmi??'—'}</td><td>${a.anthropometry?.whr??'—'}</td><td>${a.tests?.tug??'—'}</td><td>${a.tests?.sitStand??'—'}</td><td>${a.tests?.gripR??'—'} / ${a.tests?.gripL??'—'}</td><td>${a.tests?.wells??'—'}</td><td>${a.cardio?.vo2??'—'}</td><td>${a.cardio?.fcMaxCalc??'—'}</td></tr>`).join('')+'</table>';
+    // Atualiza o relatório após a montagem, sem substituir a estrutura de treinamento existente.
+    if(last){
+      let details=out.querySelector('.v19-latest-details');if(!details){details=document.createElement('div');details.className='card v19-latest-details';out.appendChild(details)}
+      details.innerHTML=`<h3>DADOS DA AVALIAÇÃO MAIS RECENTE</h3><table><tr><th>Item</th><th>Resultado</th></tr>
+      <tr><td>Anamnese / condições</td><td>${escv(last.anamnese?.conditions)}</td></tr><tr><td>Medicamentos</td><td>${escv(last.anamnese?.meds)}</td></tr><tr><td>Histórico</td><td>${escv(last.anamnese?.history)}</td></tr><tr><td>Limitações</td><td>${escv(last.anamnese?.limits)}</td></tr>
+      <tr><td>Peso / Altura</td><td>${escv(last.anthropometry?.weight)} kg / ${escv(last.anthropometry?.height)} cm</td></tr><tr><td>Observações antropométricas</td><td>${escv(last.anthropometry?.obs)}</td></tr><tr><td>Observações funcionais</td><td>${escv(last.tests?.obs)}</td></tr>
+      <tr><td>Observações gerais</td><td>${escv(last.general)}</td></tr><tr><td>FC repouso / FC máxima observada</td><td>${escv(last.cardio?.fcRest)} / ${escv(last.cardio?.fcMaxObs)}</td></tr><tr><td>FC-alvo</td><td>${escv(last.cardio?.fcTarget)}</td></tr></table>`;
+    }
+  };
+
+  // Corrige pacientes antigos que tenham idade gravada, e mantém tudo centralizado.
+  document.addEventListener('DOMContentLoaded',()=>{
+    setTimeout(()=>{
+      try{refreshPatientAges();wirePatientSelectors();if(typeof renderPatients==='function')renderPatients();}catch(e){console.warn('V19 repair init',e)}
+    },120);
+  });
+  window.addEventListener('pageshow',()=>setTimeout(refreshPatientAges,80));
 })();
 </script>
 
@@ -6204,6 +6691,291 @@ const oldSync=window.syncMovimentUpV10;if(typeof oldSync==='function'&&!window._
   }else{
     setTimeout(function(){wireAge();wireDeleteButtons();auditButtons();},0);
   }
+})();
+</script>
+<script id="moviment-up-v19-integrity-check">
+(function(){
+  // Diagnóstico silencioso: se algum navegador receber uma versão com o
+  // código-fonte do módulo de fichas no BODY, registra no console em vez de
+  // alterar ou apagar dados do usuário. A versão correta nunca deve disparar.
+  try{
+    const t=document.body?.innerText||'';
+    if(/function\s+(header|strengthBody|aerobicBody)\s*\(/.test(t)){
+      console.error('Moviment Up V19: código de geração de ficha apareceu como texto no BODY. Verificar publicação do HTML.');
+    }
+  }catch(e){}
+})();
+</script>
+
+
+<style id="moviment-up-v19-2-final-fixes">
+/* PRESCRIÇÃO DE EXERCÍCIO: fica rosa somente quando estiver ativa. */
+#nav button[onclick="show('training')"].nav-active,
+#nav button.nav-training.nav-active{
+  background:linear-gradient(180deg,#ef6aa0,#e05288)!important;
+  color:#fff!important;
+  border-color:#c73d7d!important;
+  box-shadow:0 4px 12px rgba(224,82,136,.28)!important;
+}
+</style>
+<script id="moviment-up-v19-2-final-fixes">
+(function(){
+  'use strict';
+  const LOCAL_KEY='casa_david_moviment_up_v1';
+  const DELETE_KEY='casa_david_moviment_up_deleted_patients_v19_2';
+  const $=id=>document.getElementById(id);
+  const sid=v=>String(v==null?'':v);
+
+  try{ if(typeof db!=='undefined') window.db=db; }catch(e){}
+  function getDB(){try{return (typeof db!=='undefined')?db:(window.db||null)}catch(e){return window.db||null}}
+  function tombs(){try{const a=JSON.parse(localStorage.getItem(DELETE_KEY)||'[]');return new Set(Array.isArray(a)?a.map(sid):[])}catch(e){return new Set()}}
+  function saveTombs(set){try{localStorage.setItem(DELETE_KEY,JSON.stringify([...set]))}catch(e){}}
+  function addTomb(id){const s=tombs();s.add(sid(id));saveTombs(s)}
+  function isTomb(id){return tombs().has(sid(id))}
+  function saveNow(){try{if(typeof persist==='function')return persist()!==false}catch(e){} try{const d=getDB();if(d)localStorage.setItem(LOCAL_KEY,JSON.stringify(d));return true}catch(e){return false}}
+
+  /* Nunca deixa um cadastro que já foi apagado reaparecer por uma cópia antiga. */
+  function scrubDeleted(){
+    const d=getDB();if(!d||!Array.isArray(d.patients))return;
+    const ids=tombs();let changed=false;
+    d.patients.forEach(p=>{
+      if(p&&ids.has(sid(p.id))&&!p.deleted){p.deleted=true;p.deletedAt=p.deletedAt||new Date().toISOString();changed=true;}
+    });
+    if(changed){try{localStorage.setItem(LOCAL_KEY,JSON.stringify(d))}catch(e){} }
+  }
+
+  /* ============================================================
+     PDF — NÃO procura novamente o paciente ao clicar em imprimir.
+     O relatório já aberto na tela é a fonte. Isso elimina o erro de ID
+     inválido que ocorria somente no segundo clique.
+     ============================================================ */
+  window.generatePatientPDF=function(){
+    try{
+      const report=$('reportContent');
+      if(!report || !report.textContent.trim()){
+        alert('Abra o relatório do paciente antes de imprimir.');
+        return;
+      }
+      const bad=/Selecione um paciente\.|Paciente não encontrado\.|Erro ao carregar o relatório/i.test(report.textContent.trim());
+      if(bad){
+        alert('O relatório atual não contém dados válidos do paciente. Abra novamente a avaliação e tente imprimir.');
+        return;
+      }
+      const old=$('printReportShell');if(old)old.remove();
+      const shell=document.createElement('div');shell.id='printReportShell';
+      shell.innerHTML=report.innerHTML;
+      document.body.appendChild(shell);
+      document.body.classList.add('printing-report');
+      const finish=()=>{document.body.classList.remove('printing-report');const x=$('printReportShell');if(x)x.remove();};
+      setTimeout(()=>{window.print();setTimeout(finish,1200)},120);
+    }catch(e){
+      console.error('V19.2 PDF:',e);
+      alert('Não foi possível abrir a impressão. Os dados do paciente permanecem salvos.');
+    }
+  };
+
+  /* ============================================================
+     EXCLUSÃO — primeiro grava localmente o tombstone. A exclusão não
+     depende de DELETE/RLS do Supabase para desaparecer da plataforma.
+     Depois tenta apagar a linha remota; se o servidor impedir, o tombstone
+     continua impedindo que o cadastro antigo volte.
+     ============================================================ */
+  window.deletePatient=async function(pid){
+    const d=getDB();if(!d||!Array.isArray(d.patients))return;
+    const id=sid(pid);
+    const p=d.patients.find(x=>x&&sid(x.id)===id);
+    if(!p||p.deleted||isTomb(id))return;
+    const linked=['assessments','training','trainingPlans','trainingProgressions','trainingSchedules','trainingAttendance','aerobicLogs','trainingCancellations','aulas'];
+    const total=linked.reduce((n,k)=>n+(Array.isArray(d[k])?d[k].filter(x=>sid(x?.patientId)===id).length:0),0);
+    if(!confirm(`APAGAR CADASTRO COMPLETO?\n\nPaciente: ${p.name}\n\nSerão excluídos o cadastro e ${total} registro(s) vinculado(s).\n\nEsta ação NÃO pode ser desfeita.`))return;
+    if(!confirm(`CONFIRMA DEFINITIVAMENTE a exclusão de ${p.name}?`))return;
+
+    const name=p.name||'Paciente';
+    const now=new Date().toISOString();
+    addTomb(id);
+    p.deleted=true;p.deletedAt=now;p.updatedAt=now;
+    linked.forEach(k=>{if(Array.isArray(d[k]))d[k]=d[k].filter(x=>sid(x?.patientId)!==id)});
+    try{
+      if(typeof currentTrainingPatientId!=='undefined'&&sid(currentTrainingPatientId)===id)currentTrainingPatientId='';
+      if(typeof currentTrainingPlan!=='undefined')currentTrainingPlan=null;
+      if(typeof currentPatientEditId!=='undefined'&&sid(currentPatientEditId)===id)currentPatientEditId=null;
+    }catch(e){}
+    ['tPatient','sPatient','aPatient','hPatient','rPatient','attPatient'].forEach(k=>{const el=$(k);if(el)el.value=''});
+    if(sid(window.activePatientId||'')===id)window.activePatientId='';
+
+    /* Persistência local acontece ANTES de qualquer tentativa de rede. */
+    if(!saveNow()){
+      alert('Não foi possível salvar a exclusão neste computador.');
+      return;
+    }
+    try{if(typeof renderPatients==='function')renderPatients()}catch(e){}
+    try{if(typeof populateSelects==='function')populateSelects()}catch(e){}
+    try{if(typeof updateCounts==='function')updateCounts()}catch(e){}
+    try{if(typeof renderSuggestionTab==='function')renderSuggestionTab()}catch(e){}
+
+    /* Tenta remover também no Supabase, mas NÃO desfaz a exclusão local se RLS bloquear. */
+    let remote='pendente';
+    try{
+      const url=typeof SUPABASE_URL!=='undefined'?SUPABASE_URL:'https://rliqdzgeooekkskchjhz.supabase.co';
+      const key=typeof SUPABASE_KEY!=='undefined'?SUPABASE_KEY:'sb_publishable_e_8kwsxtECNu3poH0-JaBg_9nr8U9y';
+      if(navigator.onLine&&key){
+        const headers={'apikey':key,'Authorization':'Bearer '+key,'Content-Type':'application/json','Prefer':'return=minimal'};
+        const r=await fetch(url+'/rest/v1/patients?id=eq.'+encodeURIComponent(id),{method:'DELETE',headers,cache:'no-store'});
+        remote=r.ok?'apagado':'tombstone local';
+      }
+    }catch(e){console.warn('V19.2: exclusão remota pendente; tombstone local preservado.',e)}
+
+    try{window.__movimentUpSetStatus?.('online',remote==='apagado'?'ONLINE • cadastro excluído':'ONLINE • exclusão registrada localmente')}catch(e){}
+    alert(`Cadastro de ${name} apagado com sucesso.\n\nO cadastro foi removido da lista e não deverá retornar pela sincronização.`);
+  };
+
+  /* Se o sincronizador antigo trouxer uma cópia, reaplica o tombstone logo após ele terminar. */
+  const oldSync=window.syncMovimentUpV10;
+  if(typeof oldSync==='function'&&!window.__v192SyncWrap){
+    window.__v192SyncWrap=true;
+    window.syncMovimentUpV10=async function(reason){
+      const result=await oldSync(reason||'sincronização V19.2');
+      scrubDeleted();
+      try{if(typeof persist==='function')persist()}catch(e){}
+      try{if(typeof renderPatients==='function')renderPatients()}catch(e){}
+      try{if(typeof populateSelects==='function')populateSelects()}catch(e){}
+      try{if(typeof updateCounts==='function')updateCounts()}catch(e){}
+      return result;
+    };
+  }
+
+  /* Também protege aberturas da plataforma e ciclos de sincronização já agendados. */
+  scrubDeleted();
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(scrubDeleted,100));
+  else setTimeout(scrubDeleted,100);
+  setTimeout(scrubDeleted,1000);
+  setTimeout(scrubDeleted,2500);
+})();
+</script>
+
+<script id="moviment-up-v19-5-delete-assessment-fix">
+(function(){
+  'use strict';
+  /* V19.5 — exclusão definitiva de AVALIAÇÕES.
+     O problema da V19.4 era que a avaliação era retirada somente do banco local.
+     Na sincronização seguinte, a cópia ainda existente no Supabase era baixada
+     novamente. Esta rotina cria um tombstone local e também grava um tombstone
+     remoto na tabela assessments quando necessário, impedindo o retorno. */
+  const KEY='casa_david_moviment_up_deleted_assessments_v19_5';
+  const sid=v=>String(v==null?'':v);
+  const clone=v=>{try{return JSON.parse(JSON.stringify(v))}catch(e){return v}};
+  function tombs(){try{const x=JSON.parse(localStorage.getItem(KEY)||'[]');return new Set(Array.isArray(x)?x.map(sid):[])}catch(e){return new Set()}}
+  function saveTombs(set){try{localStorage.setItem(KEY,JSON.stringify([...set]))}catch(e){}}
+  function addTomb(id){const s=tombs();s.add(sid(id));saveTombs(s)}
+  function isTomb(id){return tombs().has(sid(id))}
+  function getDB(){try{return window.db || (typeof db!=='undefined'?db:null)}catch(e){return window.db||null}}
+  function saveLocal(){try{if(typeof persist==='function')persist();else{const d=getDB();if(d)localStorage.setItem('casa_david_moviment_up_v1',JSON.stringify(d))}return true}catch(e){console.warn('V19.5 persist:',e);return false}}
+
+  function removeDeletedAssessments(){
+    const d=getDB(); if(!d||!Array.isArray(d.assessments))return false;
+    const ts=tombs(); let changed=false;
+    d.assessments=d.assessments.filter(a=>{
+      const id=sid(a?.id);
+      if(!id)return true;
+      if(a?.deleted===true){ if(!ts.has(id)){ts.add(id);changed=true;} return false; }
+      if(ts.has(id)){changed=true;return false;}
+      return true;
+    });
+    saveTombs(ts);
+    return changed;
+  }
+
+  async function remoteAssessmentTombstone(a){
+    if(!navigator.onLine)return false;
+    try{
+      const url=typeof SUPABASE_URL!=='undefined'?SUPABASE_URL:window.SUPABASE_URL;
+      const key=typeof SUPABASE_KEY!=='undefined'?SUPABASE_KEY:window.SUPABASE_KEY;
+      if(!url||!key)return false;
+      const now=new Date().toISOString();
+      const data=clone(a)||{};
+      data.deleted=true;
+      data.deletedAt=now;
+      data.updatedAt=now;
+      const headers={apikey:key,Authorization:'Bearer '+key,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'};
+      const r=await fetch(url+'/rest/v1/assessments?on_conflict=id',{method:'POST',headers,body:JSON.stringify([{id:sid(a.id),data,created_at:a.createdAt||now,updated_at:now}]),cache:'no-store'});
+      return r.ok;
+    }catch(e){console.warn('V19.5: tombstone remoto da avaliação pendente.',e);return false}
+  }
+
+  async function flushAssessmentTombs(){
+    const d=getDB(); const ids=tombs();
+    if(!navigator.onLine||!ids.size)return;
+    for(const id of [...ids]){
+      try{
+        /* Se a avaliação ainda existir localmente, usamos seus dados; caso
+           contrário enviamos apenas o mínimo necessário para o tombstone. */
+        const a=(d?.assessments||[]).find(x=>sid(x?.id)===id)||{id};
+        const ok=await remoteAssessmentTombstone(a);
+        if(ok) console.info('V19.5: exclusão de avaliação sincronizada',id);
+      }catch(e){console.warn('V19.5: falha ao propagar exclusão da avaliação',id,e)}
+    }
+  }
+
+  window.deleteAssessment=async function(id){
+    const d=getDB(); if(!d||!Array.isArray(d.assessments))return;
+    const sidId=sid(id);
+    const a=d.assessments.find(x=>sid(x?.id)===sidId);
+    if(!a||isTomb(sidId))return;
+    const p=(d.patients||[]).find(x=>sid(x?.id)===sid(a.patientId));
+    const label=(typeof formatDate==='function'?formatDate(a.date):a.date||'data não informada')+' — '+(a.professor||'Professor não informado');
+    if(!confirm(`Tem certeza que deseja APAGAR a avaliação de ${p?.name||'este paciente'} em ${label}?\n\nEsta ação não pode ser desfeita.`))return;
+
+    /* Marca primeiro: a avaliação não pode voltar mesmo que o Supabase demore. */
+    addTomb(sidId);
+    d.assessments=d.assessments.filter(x=>sid(x?.id)!==sidId);
+    if(typeof currentAssessmentId!=='undefined' && sid(currentAssessmentId)===sidId){
+      currentAssessmentId=null;
+      try{if(typeof clearAssessment==='function')clearAssessment(true)}catch(e){}
+    }
+    saveLocal();
+    removeDeletedAssessments();
+    try{if(typeof renderHistory==='function' && document.getElementById('history')?.classList.contains('active'))renderHistory()}catch(e){}
+    try{if(typeof renderReport==='function' && document.getElementById('report')?.classList.contains('active'))renderReport()}catch(e){}
+    try{openPatientAssessments(a.patientId)}catch(e){}
+
+    /* Propaga a exclusão. Primeiro tentamos DELETE. Se houver RLS ou outro
+       bloqueio, o tombstone é gravado na própria linha de assessments e passa
+       a ser reconhecido por todos os dispositivos. */
+    let remoteDone=false;
+    try{
+      const url=typeof SUPABASE_URL!=='undefined'?SUPABASE_URL:window.SUPABASE_URL;
+      const key=typeof SUPABASE_KEY!=='undefined'?SUPABASE_KEY:window.SUPABASE_KEY;
+      if(navigator.onLine&&url&&key){
+        const h={apikey:key,Authorization:'Bearer '+key,'Content-Type':'application/json','Prefer':'return=minimal'};
+        const r=await fetch(url+'/rest/v1/assessments?id=eq.'+encodeURIComponent(sidId),{method:'DELETE',headers:h,cache:'no-store'});
+        if(r.ok)remoteDone=true;
+        else console.warn('V19.5: DELETE remoto da avaliação bloqueado:',r.status);
+      }
+    }catch(e){console.warn('V19.5: DELETE remoto pendente.',e)}
+    if(!remoteDone)await remoteAssessmentTombstone(a);
+
+    try{if(typeof window.__movimentUpSetStatus==='function')window.__movimentUpSetStatus('online',remoteDone?'ONLINE • avaliação excluída':'ONLINE • exclusão da avaliação registrada')}catch(e){}
+    alert(`Avaliação de ${p?.name||'paciente'} apagada com sucesso.\n\nO registro foi removido e não deverá retornar pela sincronização.`);
+  };
+
+  /* Toda sincronização é seguida pela limpeza das avaliações apagadas e pela
+     propagação dos tombstones pendentes. */
+  const currentSync=window.syncMovimentUpV10;
+  if(typeof currentSync==='function'&&!window.__v195AssessmentSyncWrap){
+    window.__v195AssessmentSyncWrap=true;
+    window.syncMovimentUpV10=async function(reason){
+      const result=await currentSync(reason||'sincronização V19.5');
+      removeDeletedAssessments();
+      await flushAssessmentTombs();
+      removeDeletedAssessments();
+      saveLocal();
+      return result;
+    };
+  }
+
+  removeDeletedAssessments();
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>{removeDeletedAssessments();flushAssessmentTombs()},150));
+  else setTimeout(()=>{removeDeletedAssessments();flushAssessmentTombs()},150);
 })();
 </script>
 </body>
