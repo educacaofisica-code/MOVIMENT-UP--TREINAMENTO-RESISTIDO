@@ -5316,6 +5316,29 @@ setTimeout(render,200);setTimeout(render,800);
     }
     return sent;
   }
+
+  /* Sincronização de união: garante que um paciente que existe apenas neste
+     aparelho também chegue ao Supabase, mesmo que ele já estivesse no
+     snapshot local antes desta versão. Isso resolve a diferença 64 x 90 sem
+     reenviar pacientes que já existem no servidor. */
+  async function upsertPatientsMissingOnRemote(remotePatients){
+    const d=ensureDB(); if(!d)return 0;
+    const remoteIds=new Set((remotePatients||[]).filter(r=>r&&r.id!=null).map(r=>String(r.id)));
+    const missing=(d.patients||[]).filter(p=>p&&p.id!=null&&!remoteIds.has(String(p.id)));
+    if(!missing.length)return 0;
+    let sent=0;
+    for(const p of missing){
+      const row={id:String(p.id),data:patientPayload(p),created_at:p.createdAt||now(),updated_at:p.updatedAt||now()};
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),15000);
+      try{
+        const r=await fetch(URL+'/rest/v1/patients?on_conflict=id',{method:'POST',headers:headers({'Prefer':'resolution=merge-duplicates,return=minimal','Cache-Control':'no-cache'}),body:JSON.stringify([row]),cache:'no-store',credentials:'omit',signal:controller.signal});
+        if(!r.ok)throw new Error('patients UPSERT missing '+r.status+' '+await r.text().catch(()=>'') );
+        sent++;
+      }finally{clearTimeout(timer)}
+    }
+    return sent;
+  }
   /* Compatibilidade: algumas rotinas antigas da V19 chamavam
      upsertPatients pelo escopo global. A função principal fica dentro desta
      IIFE para não poluir o namespace, mas expomos somente este método para
@@ -5356,6 +5379,20 @@ setTimeout(render,200);setTimeout(render,800);
          inserido após a primeira passada e garante uma única identidade local. */
       const consolidatedAfter=consolidateLocalPatients(remotePatients);
 
+      /* Garante a união entre os dispositivos: primeiro envia ao Supabase
+         somente pacientes que não existem remotamente; depois baixa novamente
+         a tabela para que o outro aparelho possa receber esses registros. */
+      let pushedMissingPatients=0;
+      try{
+        pushedMissingPatients=await upsertPatientsMissingOnRemote(remotePatients);
+        if(pushedMissingPatients>0) remotePatients=await getRemote('patients');
+      }catch(e){
+        console.warn('SYNC: pacientes locais ausentes não puderam ser enviados.',e);
+      }
+      if(pushedMissingPatients>0){
+        for(const row of remotePatients){if(mergeRemotePatient(row,snapshot))remotePatientChanges++;}
+      }
+
       /* assessments é complementar: se falhar, pacientes continuam sincronizados. */
       try{
         remoteAssessments=await getRemote('assessments');
@@ -5388,7 +5425,7 @@ setTimeout(render,200);setTimeout(render,800);
         writeSnapshot();
         localSave();
         setStatus('online','ONLINE • sincronizado com Supabase');
-        console.log('Moviment Up — sincronização concluída',{reason,remotePatients:remotePatients.length,activePatients:activeRemotePatients(remotePatients).length,remoteAssessments:remoteAssessments.length,pushedPatients,pushedAssessments});
+        console.log('Moviment Up — sincronização concluída',{reason,remotePatients:remotePatients.length,activePatients:activeRemotePatients(remotePatients).length,remoteAssessments:remoteAssessments.length,pushedPatients,pushedMissingPatients,pushedAssessments});
       }else{
         writeSnapshot();
         localSave();
